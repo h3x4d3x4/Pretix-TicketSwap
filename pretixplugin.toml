@@ -1,0 +1,33 @@
+[meta]
+name = "pretix-ticketswap"
+version = "1.0.0"
+category = "INTEGRATION"
+min_basever = "2024.7.0"
+
+[author]
+name = "Andre Vidal"
+email = "andre.vidal@pm.me"
+
+[description]
+short = "TicketSwap integration for secure ticket resale"
+long = """
+This plugin integrates Pretix with TicketSwap's secondary ticket marketplace, 
+enabling secure and fair ticket resale through TicketSwap's SecureSwap technology.
+
+Features:
+- Automatic event synchronization to TicketSwap
+- SecureSwap integration for ticket invalidation and regeneration
+- Webhook support for real-time updates
+- GDPR-compliant data management
+- Multi-language support (EN, PT)
+
+Requires a TicketSwap partnership and API credentials to use.
+"""
+
+[license]
+type = "Apache-2.0"
+url = "https://www.apache.org/licenses/LICENSE-2.0"
+
+[repository]
+type = "git"
+url = "https://github.com/yourusername/pretix-ticketswap"

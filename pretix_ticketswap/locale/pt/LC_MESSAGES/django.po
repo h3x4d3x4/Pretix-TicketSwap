@@ -1,0 +1,203 @@
+# Portuguese translations for TicketSwap Integration plugin
+# Copyright (C) 2026 Andre Vidal
+# This file is distributed under the same license as the pretix-ticketswap package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: pretix-ticketswap 1.0.0\n"
+"Report-Msgid-Bugs-To: andre.vidal@pm.me\n"
+"POT-Creation-Date: 2026-01-18 04:00+0000\n"
+"PO-Revision-Date: 2026-01-18 04:00+0000\n"
+"Last-Translator: Andre Vidal <andre.vidal@pm.me>\n"
+"Language: pt\n"
+"Language-Team: Portuguese\n"
+"Plural-Forms: nplurals=2; plural=(n != 1)\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.9.1\n"
+
+# Plugin metadata
+msgid "TicketSwap Integration"
+msgstr "Integração TicketSwap"
+
+msgid "Integrate your Pretix events with TicketSwap for secure ticket resale"
+msgstr "Integre os seus eventos Pretix com o TicketSwap para revenda segura de bilhetes"
+
+# Dashboard
+msgid "TicketSwap Dashboard"
+msgstr "Painel TicketSwap"
+
+msgid "TicketSwap Integration Dashboard"
+msgstr "Painel de Integração TicketSwap"
+
+msgid "Connection Status"
+msgstr "Estado da Ligação"
+
+msgid "Connected"
+msgstr "Ligado"
+
+msgid "API connection is active"
+msgstr "A ligação API está ativa"
+
+msgid "Not Configured"
+msgstr "Não Configurado"
+
+msgid "Please configure API credentials"
+msgstr "Por favor configure as credenciais API"
+
+msgid "Configure Now"
+msgstr "Configurar Agora"
+
+msgid "Connection Failed"
+msgstr "Ligação Falhada"
+
+msgid "Check your API credentials"
+msgstr "Verifique as suas credenciais API"
+
+msgid "Sandbox Mode Active"
+msgstr "Modo Sandbox Ativo"
+
+msgid "Statistics"
+msgstr "Estatísticas"
+
+msgid "Tickets Listed"
+msgstr "Bilhetes Listados"
+
+msgid "Tickets Sold"
+msgstr "Bilhetes Vendidos"
+
+msgid "SecureSwap Transfers"
+msgstr "Transferências SecureSwap"
+
+msgid "Event Synchronization"
+msgstr "Sincronização de Evento"
+
+msgid "TicketSwap Event ID"
+msgstr "ID do Evento TicketSwap"
+
+msgid "Event Name"
+msgstr "Nome do Evento"
+
+msgid "Status"
+msgstr "Estado"
+
+msgid "Synced"
+msgstr "Sincronizado"
+
+msgid "Event not yet created on TicketSwap. Enable the integration in settings to create it automatically."
+msgstr "Evento ainda não criado no TicketSwap. Ative a integração nas definições para criá-lo automaticamente."
+
+msgid "Go to Settings"
+msgstr "Ir para Definições"
+
+msgid "Quick Actions"
+msgstr "Ações Rápidas"
+
+msgid "Plugin Settings"
+msgstr "Definições do Plugin"
+
+msgid "Sync with TicketSwap"
+msgstr "Sincronizar com TicketSwap"
+
+msgid "View Listed Tickets"
+msgstr "Ver Bilhetes Listados"
+
+msgid "Open TicketSwap Dashboard"
+msgstr "Abrir Painel TicketSwap"
+
+msgid "Recent Activity"
+msgstr "Atividade Recente"
+
+msgid "Date"
+msgstr "Data"
+
+msgid "Type"
+msgstr "Tipo"
+
+msgid "Description"
+msgstr "Descrição"
+
+msgid "No recent activity"
+msgstr "Sem atividade recente"
+
+# Settings
+msgid "Enable TicketSwap Integration"
+msgstr "Ativar Integração TicketSwap"
+
+msgid "Enable automatic synchronization of tickets to TicketSwap for resale"
+msgstr "Ativar sincronização automática de bilhetes para o TicketSwap para revenda"
+
+msgid "API Key"
+msgstr "Chave API"
+
+msgid "Your TicketSwap API key. Obtain this from your TicketSwap partnership dashboard."
+msgstr "A sua chave API TicketSwap. Obtenha isto no painel de parceria TicketSwap."
+
+msgid "API Secret"
+msgstr "Segredo API"
+
+msgid "Your TicketSwap API secret. Keep this confidential."
+msgstr "O seu segredo API TicketSwap. Mantenha isto confidencial."
+
+msgid "Auto-enable Resale"
+msgstr "Ativar Revenda Automaticamente"
+
+msgid "Automatically list tickets on TicketSwap when orders are paid. If disabled, tickets must be manually enabled for resale."
+msgstr "Listar automaticamente bilhetes no TicketSwap quando os pedidos são pagos. Se desativado, os bilhetes devem ser ativados manualmente para revenda."
+
+msgid "Maximum Resale Price (%)"
+msgstr "Preço Máximo de Revenda (%)"
+
+msgid "Maximum percentage above original price for resale (e.g., 120 for 20% markup). TicketSwap typically enforces a 120% maximum."
+msgstr "Percentagem máxima acima do preço original para revenda (ex: 120 para 20% de margem). O TicketSwap normalmente impõe um máximo de 120%."
+
+msgid "API Key is required when TicketSwap integration is enabled."
+msgstr "A chave API é obrigatória quando a integração TicketSwap está ativada."
+
+msgid "API Secret is required when TicketSwap integration is enabled."
+msgstr "O segredo API é obrigatório quando a integração TicketSwap está ativada."
+
+msgid "Failed to connect to TicketSwap API. Please check your credentials."
+msgstr "Falha ao ligar à API TicketSwap. Por favor verifique as suas credenciais."
+
+msgid "API connection test failed: {error}"
+msgstr "Teste de ligação API falhado: {error}"
+
+msgid "TicketSwap integration enabled and event created successfully! Event ID: {event_id}"
+msgstr "Integração TicketSwap ativada e evento criado com sucesso! ID do Evento: {event_id}"
+
+msgid "TicketSwap settings saved successfully!"
+msgstr "Definições TicketSwap guardadas com sucesso!"
+
+msgid "Settings saved, but failed to create event on TicketSwap: {error}. You may need to create it manually."
+msgstr "Definições guardadas, mas falha ao criar evento no TicketSwap: {error}. Pode precisar de criá-lo manualmente."
+
+msgid "Test Connection"
+msgstr "Testar Ligação"
+
+msgid "Testing connection..."
+msgstr "A testar ligação..."
+
+msgid "Connection test successful!"
+msgstr "Teste de ligação bem-sucedido!"
+
+msgid "Connection test failed. Please check your credentials."
+msgstr "Teste de ligação falhado. Por favor verifique as suas credenciais."
+
+# Navigation
+msgid "TicketSwap"
+msgstr "TicketSwap"
+
+# Errors
+msgid "An error occurred while processing your request."
+msgstr "Ocorreu um erro ao processar o seu pedido."
+
+msgid "Invalid API credentials"
+msgstr "Credenciais API inválidas"
+
+msgid "Network error"
+msgstr "Erro de rede"
+
+msgid "API request failed"
+msgstr "Pedido API falhado"

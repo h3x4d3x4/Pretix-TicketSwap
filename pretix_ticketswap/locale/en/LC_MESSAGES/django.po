@@ -1,0 +1,148 @@
+# Translation template for pretix-ticketswap
+# Copyright (C) 2026 Andre Vidal
+# This file is distributed under the same license as the pretix-ticketswap package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: pretix-ticketswap 1.0.0\n"
+"Report-Msgid-Bugs-To: andre.vidal@pm.me\n"
+"POT-Creation-Date: 2026-01-18 03:00+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "TicketSwap Integration"
+msgstr ""
+
+msgid "Integrate your Pretix events with TicketSwap for secure ticket resale"
+msgstr ""
+
+msgid "Enable TicketSwap Integration"
+msgstr ""
+
+msgid "Enable automatic synchronization of tickets to TicketSwap for resale"
+msgstr ""
+
+msgid "API Key"
+msgstr ""
+
+msgid "Your TicketSwap API key. Obtain this from your TicketSwap partnership dashboard."
+msgstr ""
+
+msgid "API Secret"
+msgstr ""
+
+msgid "Your TicketSwap API secret. Keep this confidential."
+msgstr ""
+
+msgid "Auto-enable Resale"
+msgstr ""
+
+msgid "Automatically list tickets on TicketSwap when orders are paid. If disabled, tickets must be manually enabled for resale."
+msgstr ""
+
+msgid "Maximum Resale Price (%)"
+msgstr ""
+
+msgid "Maximum percentage above original price for resale (e.g., 120 for 20% markup). TicketSwap typically enforces a 120% maximum."
+msgstr ""
+
+msgid "API Key is required when TicketSwap integration is enabled."
+msgstr ""
+
+msgid "API Secret is required when TicketSwap integration is enabled."
+msgstr ""
+
+msgid "Failed to connect to TicketSwap API. Please check your credentials."
+msgstr ""
+
+msgid "API connection test failed: {error}"
+msgstr ""
+
+msgid "Save"
+msgstr ""
+
+msgid "Sandbox Mode Active"
+msgstr ""
+
+msgid "The plugin is currently running in sandbox/mock mode. API calls will be simulated. To use the live TicketSwap API, configure your credentials below."
+msgstr ""
+
+msgid "Connected to TicketSwap API"
+msgstr ""
+
+msgid "Event ID:"
+msgstr ""
+
+msgid "TicketSwap integration is not yet configured. Enter your API credentials below to get started."
+msgstr ""
+
+msgid "About TicketSwap Integration"
+msgstr ""
+
+msgid "This plugin integrates your Pretix events with TicketSwap's secondary ticket marketplace, enabling secure and fair ticket resale through TicketSwap's SecureSwap technology."
+msgstr ""
+
+msgid "Features"
+msgstr ""
+
+msgid "Automatic event synchronization to TicketSwap"
+msgstr ""
+
+msgid "SecureSwap integration for ticket invalidation and regeneration"
+msgstr ""
+
+msgid "Automatic ticket listing when orders are paid"
+msgstr ""
+
+msgid "Automatic delisting when orders are canceled"
+msgstr ""
+
+msgid "GDPR-compliant data management"
+msgstr ""
+
+msgid "Getting Started"
+msgstr ""
+
+msgid "Contact TicketSwap to establish a partnership:"
+msgstr ""
+
+msgid "Obtain your API key and secret from TicketSwap"
+msgstr ""
+
+msgid "Enter your credentials in the form above"
+msgstr ""
+
+msgid "Enable the integration and save your settings"
+msgstr ""
+
+msgid "Your event will automatically be created on TicketSwap"
+msgstr ""
+
+msgid "Support"
+msgstr ""
+
+msgid "For technical support or questions about this plugin, please contact:"
+msgstr ""
+
+msgid "TicketSwap integration enabled and event created successfully! Event ID: {event_id}"
+msgstr ""
+
+msgid "TicketSwap settings saved successfully!"
+msgstr ""
+
+msgid "Settings saved, but failed to create event on TicketSwap: {error}. You may need to create it manually."
+msgstr ""
+
+msgid "TicketSwap Integration Data"
+msgstr ""
+
+msgid "This will remove all data stored by the TicketSwap integration plugin, including sync status, TicketSwap ticket IDs, and event mappings."
+msgstr ""
+
+msgid "TicketSwap integration data has been removed."
+msgstr ""

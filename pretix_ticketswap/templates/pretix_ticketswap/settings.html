@@ -1,0 +1,152 @@
+{% extends "pretixcontrol/event/base.html" %}
+{% load i18n %}
+{% load bootstrap3 %}
+
+{% block title %}{% trans "TicketSwap Integration" %}{% endblock %}
+
+{% block content %}
+<h1>{% trans "TicketSwap Integration" %}</h1>
+
+{% if sandbox_mode %}
+<div class="alert alert-info">
+    <strong>{% trans "Sandbox Mode Active" %}</strong><br>
+    {% trans "The plugin is currently running in sandbox/mock mode. API calls will be simulated. To use the live
+    TicketSwap API, configure your credentials below." %}
+</div>
+{% endif %}
+
+{% if connection_status == "connected" %}
+<div class="alert alert-success">
+    <i class="fa fa-check-circle"></i>
+    {% trans "Connected to TicketSwap API" %}
+    {% if ticketswap_event_id %}
+    <br>
+    <strong>{% trans "Event ID:" %}</strong> {{ ticketswap_event_id }}
+    {% endif %}
+</div>
+{% elif connection_status == "failed" %}
+<div class="alert alert-danger">
+    <i class="fa fa-exclamation-triangle"></i>
+    {% trans "Failed to connect to TicketSwap API. Please check your credentials." %}
+</div>
+{% elif connection_status == "not_configured" %}
+<div class="alert alert-warning">
+    <i class="fa fa-info-circle"></i>
+    {% trans "TicketSwap integration is not yet configured. Enter your API credentials below to get started." %}
+</div>
+{% endif %}
+
+<form method="post" class="form-horizontal">
+    {% csrf_token %}
+    {% bootstrap_form form layout='horizontal' %}
+
+    <div class="form-group">
+        <div class="col-md-offset-3 col-md-9">
+            <button type="submit" class="btn btn-primary btn-save">
+                {% trans "Save" %}
+            </button>
+            <button type="button" class="btn btn-info" id="test-connection-btn">
+                <i class="fa fa-plug"></i> {% trans "Test Connection" %}
+            </button>
+            <span id="test-connection-result" style="margin-left: 10px;"></span>
+        </div>
+    </div>
+</form>
+
+<script>
+    document.getElementById('test-connection-btn').addEventListener('click', function () {
+        var btn = this;
+        var result = document.getElementById('test-connection-result');
+        var apiKey = document.getElementById('id_ticketswap_api_key').value;
+        var apiSecret = document.getElementById('id_ticketswap_api_secret').value;
+
+        if (!apiKey || !apiSecret) {
+            result.innerHTML = '<span class="text-danger"><i class="fa fa-times"></i> {% trans "Please enter API credentials first" %}</span>';
+            return;
+        }
+
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> {% trans "Testing..." %}';
+        result.innerHTML = '';
+
+        fetch('{% url "plugins:pretix_ticketswap:test_connection" event=request.event.slug organizer=request.organizer.slug %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({
+                api_key: apiKey,
+                api_secret: apiSecret
+            })
+        })
+            .then(response => response.json())
+            .then(data => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa fa-plug"></i> {% trans "Test Connection" %}';
+
+                var span = document.createElement('span');
+                var icon = document.createElement('i');
+                if (data.success) {
+                    span.className = 'text-success';
+                    icon.className = 'fa fa-check';
+                } else {
+                    span.className = 'text-danger';
+                    icon.className = 'fa fa-times';
+                }
+                span.appendChild(icon);
+                span.appendChild(document.createTextNode(' ' + data.message));
+                result.innerHTML = '';
+                result.appendChild(span);
+            })
+            .catch(error => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa fa-plug"></i> {% trans "Test Connection" %}';
+                result.innerHTML = '<span class="text-danger"><i class="fa fa-times"></i> {% trans "Connection test failed" %}</span>';
+            });
+    });
+</script>
+
+<hr>
+
+<div class="panel panel-default">
+    <div class="panel-heading">
+        <h3 class="panel-title">{% trans "About TicketSwap Integration" %}</h3>
+    </div>
+    <div class="panel-body">
+        <p>
+            {% trans "This plugin integrates your Pretix events with TicketSwap's secondary ticket marketplace, enabling
+            secure and fair ticket resale through TicketSwap's SecureSwap technology." %}
+        </p>
+
+        <h4>{% trans "Features" %}</h4>
+        <ul>
+            <li>{% trans "Automatic event synchronization to TicketSwap" %}</li>
+            <li>{% trans "SecureSwap integration for ticket invalidation and regeneration" %}</li>
+            <li>{% trans "Automatic ticket listing when orders are paid" %}</li>
+            <li>{% trans "Automatic delisting when orders are canceled" %}</li>
+            <li>{% trans "GDPR-compliant data management" %}</li>
+        </ul>
+
+        <h4>{% trans "Getting Started" %}</h4>
+        <ol>
+            <li>
+                {% trans "Contact TicketSwap to establish a partnership:" %}
+                <a href="https://www.ticketswap.com/partners" target="_blank">
+                    https://www.ticketswap.com/partners
+                </a>
+            </li>
+            <li>{% trans "Obtain your API key and secret from TicketSwap" %}</li>
+            <li>{% trans "Enter your credentials in the form above" %}</li>
+            <li>{% trans "Enable the integration and save your settings" %}</li>
+            <li>{% trans "Your event will automatically be created on TicketSwap" %}</li>
+        </ol>
+
+        <h4>{% trans "Support" %}</h4>
+        <p>
+            {% trans "For technical support or questions about this plugin, please contact:" %}
+            <a href="mailto:andre.vidal@pm.me">andre.vidal@pm.me</a>
+        </p>
+    </div>
+</div>
+{% endblock %}
