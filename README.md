@@ -155,5 +155,3 @@ The plugin includes a data shredder (`data_shredder.py`) registered with Pretix'
 ## Support
 
 - **Plugin issues**: [GitHub Issues](https://github.com/h3x4d3x4/Pretix-TicketSwap/issues)
-- **Author**: Andre Vidal — andre.vidal@pm.me
-- **TicketSwap partnership**: [ticketswap.com/partners](https://www.ticketswap.com/partners)
