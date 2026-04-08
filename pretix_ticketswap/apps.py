@@ -1,10 +1,11 @@
-from django.apps import AppConfig
 from django.utils.translation import gettext_lazy
+
+from pretix.base.plugins import PluginConfig
 
 from . import __version__
 
 
-class TicketSwapApp(AppConfig):
+class TicketSwapApp(PluginConfig):
     name = "pretix_ticketswap"
     verbose_name = "TicketSwap Integration"
     default_auto_field = 'django.db.models.BigAutoField'

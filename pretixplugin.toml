@@ -1,6 +1,6 @@
 [meta]
 name = "pretix-ticketswap"
-version = "1.0.0"
+version = "1.0.1"
 category = "INTEGRATION"
 min_basever = "2024.7.0"
 
