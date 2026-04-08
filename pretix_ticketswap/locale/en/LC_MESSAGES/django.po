@@ -5,7 +5,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: pretix-ticketswap 1.0.0\n"
-"Report-Msgid-Bugs-To: andre.vidal@pm.me\n"
+"Report-Msgid-Bugs-To: andrei@hexadexa.dev\n"
 "POT-Creation-Date: 2026-01-18 03:00+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
@@ -60,7 +60,13 @@ msgstr ""
 msgid "Failed to connect to TicketSwap API. Please check your credentials."
 msgstr ""
 
-msgid "API connection test failed: {error}"
+msgid "Webhook Secret"
+msgstr ""
+
+msgid "Secret used to verify incoming webhooks from TicketSwap. Obtain this from your TicketSwap partnership dashboard."
+msgstr ""
+
+msgid "Connection test failed. Please verify your credentials and try again."
 msgstr ""
 
 msgid "Save"
@@ -135,7 +141,7 @@ msgstr ""
 msgid "TicketSwap settings saved successfully!"
 msgstr ""
 
-msgid "Settings saved, but failed to create event on TicketSwap: {error}. You may need to create it manually."
+msgid "Settings saved, but failed to create event on TicketSwap. You may need to create it manually."
 msgstr ""
 
 msgid "TicketSwap Integration Data"

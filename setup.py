@@ -21,9 +21,9 @@ setup(
     description="TicketSwap integration for Pretix - enables secure ticket resale with SecureSwap technology",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/pretix-ticketswap",
+    url="https://github.com/h3x4d3x4/Pretix-TicketSwap",
     author="Andre Vidal",
-    author_email="andre.vidal@pm.me",
+    author_email="andrei@hexadexa.dev",
     license="Apache",
     install_requires=[
         "requests>=2.32.0",

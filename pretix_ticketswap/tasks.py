@@ -1,25 +1,17 @@
 """
-Celery tasks for async TicketSwap API operations.
+TicketSwap API task functions.
 
-All external API calls are offloaded here to avoid blocking
-the Django request/response cycle in signal handlers.
+These functions encapsulate API operations and are called from signal
+handlers. They can be wrapped with @shared_task to run via Celery
+when async execution is needed.
 """
 
-import json
 import logging
 
 from .ticketswap_api import TicketSwapAPI, TicketSwapAPIError
+from .utils import ensure_dict
 
 logger = logging.getLogger(__name__)
-
-
-def _ensure_dict(meta_info):
-    """Safely convert meta_info to a dict regardless of storage format."""
-    if isinstance(meta_info, str):
-        return json.loads(meta_info) if meta_info else {}
-    if meta_info is None:
-        return {}
-    return meta_info
 
 
 def _get_api_client(event):
@@ -76,7 +68,7 @@ def sync_order_to_ticketswap(event_pk, order_pk):
             logger.info("TicketSwap event resolved: %s", ticketswap_event_id)
 
         # Store order metadata
-        meta = _ensure_dict(order.meta_info)
+        meta = ensure_dict(order.meta_info)
         meta.setdefault("ticketswap", {})
         meta["ticketswap"]["event_id"] = ticketswap_event_id
         meta["ticketswap"]["synced"] = True
@@ -111,17 +103,15 @@ def list_tickets_for_order(event_pk, order_pk):
         logger.warning("Order paid but no TicketSwap event ID for %s", event.slug)
         return
 
-    try:
-        positions = list(order.positions.all())
+    for position in order.positions.all():
+        meta = ensure_dict(position.meta_info)
 
-        for position in positions:
-            meta = _ensure_dict(position.meta_info)
+        # Idempotency: skip if already listed
+        if meta.get("ticketswap", {}).get("listed"):
+            logger.info("Position %s already listed, skipping", position.id)
+            continue
 
-            # Idempotency: skip if already listed
-            if meta.get("ticketswap", {}).get("listed"):
-                logger.info("Position %s already listed, skipping", position.id)
-                continue
-
+        try:
             ticket_data = {
                 "event_id": ticketswap_event_id,
                 "order_code": order.code,
@@ -143,9 +133,8 @@ def list_tickets_for_order(event_pk, order_pk):
                 result.get("id"),
                 position.id,
             )
-
-    except TicketSwapAPIError as e:
-        logger.error("Failed to list tickets for order %s: %s", order.code, e)
+        except TicketSwapAPIError as e:
+            logger.error("Failed to list position %s for order %s: %s", position.id, order.code, e)
 
 
 def delist_tickets_for_order(event_pk, order_pk):
@@ -165,19 +154,18 @@ def delist_tickets_for_order(event_pk, order_pk):
     if not api:
         return
 
-    try:
-        for position in order.positions.all():
-            meta = _ensure_dict(position.meta_info)
-            ticketswap_data = meta.get("ticketswap", {})
-            ticket_id = ticketswap_data.get("ticket_id")
+    for position in order.positions.all():
+        meta = ensure_dict(position.meta_info)
+        ticketswap_data = meta.get("ticketswap", {})
+        ticket_id = ticketswap_data.get("ticket_id")
 
-            if ticket_id and ticketswap_data.get("listed"):
+        if ticket_id and ticketswap_data.get("listed"):
+            try:
                 api.delist_ticket(ticket_id)
                 logger.info("Delisted ticket from TicketSwap: %s", ticket_id)
 
                 meta["ticketswap"]["listed"] = False
                 position.meta_info = meta
                 position.save(update_fields=["meta_info"])
-
-    except TicketSwapAPIError as e:
-        logger.error("Failed to delist tickets for order %s: %s", order.code, e)
+            except TicketSwapAPIError as e:
+                logger.error("Failed to delist position %s for order %s: %s", position.id, order.code, e)

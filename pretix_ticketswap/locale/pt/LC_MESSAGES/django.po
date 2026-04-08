@@ -5,10 +5,10 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: pretix-ticketswap 1.0.0\n"
-"Report-Msgid-Bugs-To: andre.vidal@pm.me\n"
+"Report-Msgid-Bugs-To: andrei@hexadexa.dev\n"
 "POT-Creation-Date: 2026-01-18 04:00+0000\n"
 "PO-Revision-Date: 2026-01-18 04:00+0000\n"
-"Last-Translator: Andre Vidal <andre.vidal@pm.me>\n"
+"Last-Translator: Andre Vidal <andrei@hexadexa.dev>\n"
 "Language: pt\n"
 "Language-Team: Portuguese\n"
 "Plural-Forms: nplurals=2; plural=(n != 1)\n"
@@ -161,8 +161,14 @@ msgstr "O segredo API é obrigatório quando a integração TicketSwap está ati
 msgid "Failed to connect to TicketSwap API. Please check your credentials."
 msgstr "Falha ao ligar à API TicketSwap. Por favor verifique as suas credenciais."
 
-msgid "API connection test failed: {error}"
-msgstr "Teste de ligação API falhado: {error}"
+msgid "Webhook Secret"
+msgstr "Segredo do Webhook"
+
+msgid "Secret used to verify incoming webhooks from TicketSwap. Obtain this from your TicketSwap partnership dashboard."
+msgstr "Segredo usado para verificar webhooks recebidos do TicketSwap. Obtenha isto no painel de parceria TicketSwap."
+
+msgid "Connection test failed. Please verify your credentials and try again."
+msgstr "Teste de ligação falhado. Por favor verifique as suas credenciais e tente novamente."
 
 msgid "TicketSwap integration enabled and event created successfully! Event ID: {event_id}"
 msgstr "Integração TicketSwap ativada e evento criado com sucesso! ID do Evento: {event_id}"
@@ -170,8 +176,8 @@ msgstr "Integração TicketSwap ativada e evento criado com sucesso! ID do Event
 msgid "TicketSwap settings saved successfully!"
 msgstr "Definições TicketSwap guardadas com sucesso!"
 
-msgid "Settings saved, but failed to create event on TicketSwap: {error}. You may need to create it manually."
-msgstr "Definições guardadas, mas falha ao criar evento no TicketSwap: {error}. Pode precisar de criá-lo manualmente."
+msgid "Settings saved, but failed to create event on TicketSwap. You may need to create it manually."
+msgstr "Definições guardadas, mas falha ao criar evento no TicketSwap. Pode precisar de criá-lo manualmente."
 
 msgid "Test Connection"
 msgstr "Testar Ligação"

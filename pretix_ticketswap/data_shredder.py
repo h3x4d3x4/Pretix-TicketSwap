@@ -10,14 +10,7 @@ from django.utils.translation import gettext_lazy as _
 
 from pretix.base.shredder import BaseDataShredder
 
-
-def _ensure_dict(meta_info):
-    """Safely convert meta_info to a dict regardless of storage format."""
-    if isinstance(meta_info, str):
-        return json.loads(meta_info) if meta_info else {}
-    if meta_info is None:
-        return {}
-    return meta_info
+from .utils import ensure_dict
 
 
 class TicketSwapDataShredder(BaseDataShredder):
@@ -49,7 +42,7 @@ class TicketSwapDataShredder(BaseDataShredder):
         if orders.exists():
             data = []
             for order in orders:
-                meta = _ensure_dict(order.meta_info)
+                meta = ensure_dict(order.meta_info)
                 ticketswap_data = meta.get("ticketswap", {})
                 if ticketswap_data:
                     data.append({
@@ -59,7 +52,7 @@ class TicketSwapDataShredder(BaseDataShredder):
                     })
 
                 for position in order.positions.all():
-                    pos_meta = _ensure_dict(position.meta_info)
+                    pos_meta = ensure_dict(position.meta_info)
                     pos_ticketswap = pos_meta.get("ticketswap", {})
                     if pos_ticketswap:
                         data.append({
@@ -92,14 +85,14 @@ class TicketSwapDataShredder(BaseDataShredder):
         positions_to_update = []
 
         for order in orders:
-            meta = _ensure_dict(order.meta_info)
+            meta = ensure_dict(order.meta_info)
             if "ticketswap" in meta:
                 del meta["ticketswap"]
                 order.meta_info = meta
                 orders_to_update.append(order)
 
             for position in order.positions.all():
-                pos_meta = _ensure_dict(position.meta_info)
+                pos_meta = ensure_dict(position.meta_info)
                 if "ticketswap" in pos_meta:
                     del pos_meta["ticketswap"]
                     position.meta_info = pos_meta

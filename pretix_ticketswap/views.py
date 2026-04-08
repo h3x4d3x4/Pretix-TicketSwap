@@ -5,6 +5,7 @@ Django views for TicketSwap plugin admin interface.
 import json
 import logging
 
+from django.contrib import messages
 from django.core.cache import cache
 from django.http import JsonResponse
 from django.shortcuts import redirect
@@ -75,10 +76,30 @@ class TicketSwapDashboardView(EventPermissionRequiredMixin, TemplateView):
             "ticketswap_event_id", as_type=str, default=""
         )
 
+        # Compute stats from position meta_info
+        from pretix.base.models import OrderPosition
+        from .utils import ensure_dict
+
+        positions = OrderPosition.objects.filter(
+            order__event=self.request.event,
+            order__meta_info__contains='"ticketswap"',
+        )
+        listed = 0
+        sold = 0
+        transferred = 0
+        for pos in positions:
+            ts = ensure_dict(pos.meta_info).get("ticketswap", {})
+            if ts.get("listed"):
+                listed += 1
+            if ts.get("sold"):
+                sold += 1
+            if ts.get("transferred"):
+                transferred += 1
+
         context["stats"] = {
-            "listed_tickets": 0,
-            "sold_tickets": 0,
-            "secureswap_transfers": 0,
+            "listed_tickets": listed,
+            "sold_tickets": sold,
+            "secureswap_transfers": transferred,
         }
 
         context["recent_activity"] = []
@@ -162,7 +183,7 @@ class TicketSwapWebhookView(View):
         event_type = data.get("event")
         ticketswap_event_id = data.get("event_id")
 
-        if not ticketswap_event_id:
+        if not ticketswap_event_id or not isinstance(ticketswap_event_id, str):
             logger.warning("Webhook missing event_id field")
             return JsonResponse({"error": "Missing event_id"}, status=400)
 
@@ -223,7 +244,7 @@ class TicketSwapWebhookView(View):
         Marks the ticket as sold in the position meta_info.
         """
         from pretix.base.models import OrderPosition
-        from .tasks import _ensure_dict
+        from .utils import ensure_dict
 
         ticket_id = data.get("ticket_id")
         logger.info("Ticket sold on TicketSwap: %s", ticket_id)
@@ -235,7 +256,7 @@ class TicketSwapWebhookView(View):
         for position in OrderPosition.objects.filter(
             order__event=event
         ).select_related("order"):
-            meta = _ensure_dict(position.meta_info)
+            meta = ensure_dict(position.meta_info)
             if meta.get("ticketswap", {}).get("ticket_id") == ticket_id:
                 meta["ticketswap"]["sold"] = True
                 position.meta_info = meta
@@ -251,7 +272,7 @@ class TicketSwapWebhookView(View):
         so the new buyer can use the ticket at the door.
         """
         from pretix.base.models import OrderPosition
-        from .tasks import _ensure_dict
+        from .utils import ensure_dict
 
         old_ticket_id = data.get("old_ticket_id")
         new_ticket_id = data.get("new_ticket_id")
@@ -267,7 +288,7 @@ class TicketSwapWebhookView(View):
         for position in OrderPosition.objects.filter(
             order__event=event
         ).select_related("order"):
-            meta = _ensure_dict(position.meta_info)
+            meta = ensure_dict(position.meta_info)
             if meta.get("ticketswap", {}).get("ticket_id") == old_ticket_id:
                 # Update the barcode (secret) so the new ticket works at the door
                 position.secret = new_barcode
@@ -286,7 +307,7 @@ class TicketSwapWebhookView(View):
         Updates the position meta_info to reflect the listing was cancelled.
         """
         from pretix.base.models import OrderPosition
-        from .tasks import _ensure_dict
+        from .utils import ensure_dict
 
         ticket_id = data.get("ticket_id")
         logger.info("Ticket listing cancelled: %s", ticket_id)
@@ -297,7 +318,7 @@ class TicketSwapWebhookView(View):
         for position in OrderPosition.objects.filter(
             order__event=event
         ).select_related("order"):
-            meta = _ensure_dict(position.meta_info)
+            meta = ensure_dict(position.meta_info)
             if meta.get("ticketswap", {}).get("ticket_id") == ticket_id:
                 meta["ticketswap"]["listed"] = False
                 meta["ticketswap"]["cancelled"] = True
@@ -342,11 +363,16 @@ class TicketSwapSettingsView(EventPermissionRequiredMixin, FormView):
         }
         return kwargs
 
+    # Fields that use PasswordInput — never overwrite with blank on re-save
+    _secret_fields = {"ticketswap_api_secret", "ticketswap_webhook_secret"}
+
     def form_valid(self, form):
         """Save settings when form is valid."""
-        from django.contrib import messages
 
         for key, value in form.cleaned_data.items():
+            # Don't erase stored secrets when the user leaves password fields blank
+            if key in self._secret_fields and not value:
+                continue
             self.request.event.settings.set(key, value)
 
         # Invalidate cached connection status
@@ -354,8 +380,12 @@ class TicketSwapSettingsView(EventPermissionRequiredMixin, FormView):
 
         # If enabling for the first time, try to create event on TicketSwap
         if form.cleaned_data.get("ticketswap_enabled"):
+            # Use form values, falling back to stored settings for blank password fields
             api_key = form.cleaned_data.get("ticketswap_api_key")
-            api_secret = form.cleaned_data.get("ticketswap_api_secret")
+            api_secret = (
+                form.cleaned_data.get("ticketswap_api_secret")
+                or self.request.event.settings.get("ticketswap_api_secret", as_type=str, default="")
+            )
 
             try:
                 api = TicketSwapAPI(api_key, api_secret)

@@ -6,7 +6,7 @@ min_basever = "2024.7.0"
 
 [author]
 name = "Andre Vidal"
-email = "andre.vidal@pm.me"
+email = "andrei@hexadexa.dev"
 
 [description]
 short = "TicketSwap integration for secure ticket resale"
@@ -30,4 +30,4 @@ url = "https://www.apache.org/licenses/LICENSE-2.0"
 
 [repository]
 type = "git"
-url = "https://github.com/yourusername/pretix-ticketswap"
+url = "https://github.com/h3x4d3x4/Pretix-TicketSwap"

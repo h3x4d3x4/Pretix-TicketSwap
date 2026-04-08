@@ -24,7 +24,7 @@ Signal handlers (signals.py)          Webhook endpoint (views.py)
         │                                      │
         ▼                                      ▼
   tasks.py                            Event lookup + signature verify
-  (decoupled from request cycle)               │
+  (API logic, Celery-ready)                    │
         │                                      ▼
         ▼                              _handle_ticket_sold
   TicketSwapAPI client                 _handle_ticket_transferred  ← SecureSwap
@@ -36,7 +36,7 @@ Signal handlers (signals.py)          Webhook endpoint (views.py)
 ```
 
 **Key design decisions:**
-- Signal handlers are lightweight dispatchers — all API work lives in `tasks.py`
+- Signal handlers are lightweight dispatchers — all API work lives in `tasks.py` (can be wrapped with `@shared_task` for Celery when needed)
 - Connection status is cached (5-min TTL) to avoid API calls on every page load
 - `meta_info` is handled safely regardless of whether Pretix stores it as a dict or JSON string
 - Idempotency guards prevent duplicate ticket listings if signals fire twice
@@ -122,11 +122,12 @@ pretix_ticketswap/
 ├── __init__.py              # Version
 ├── apps.py                  # Django AppConfig + PretixPluginMeta
 ├── ticketswap_api.py        # API client (shared session, retry, SSRF guard)
-├── tasks.py                 # Decoupled task functions (sync, list, delist)
+├── tasks.py                 # Task functions (sync, list, delist) — Celery-ready
 ├── signals.py               # Lightweight signal dispatchers
 ├── views.py                 # Dashboard, settings, test connection, webhook
 ├── forms.py                 # Settings form with validation
 ├── urls.py                  # URL routing (4 endpoints)
+├── utils.py                 # Shared helpers (ensure_dict)
 ├── data_shredder.py         # GDPR-compliant data deletion
 ├── templates/               # Admin dashboard + settings page
 ├── locale/                  # EN + PT translations (.po + .mo)
@@ -141,7 +142,7 @@ pretix_ticketswap/
 - No internal error details leaked in responses
 - API credentials stored in Pretix's Hierarkey (per-event encrypted settings)
 - SSRF protection on API endpoint construction
-- XSS-safe template rendering (textContent, not innerHTML)
+- XSS-safe template rendering (user-controlled data uses createTextNode, not innerHTML)
 - All admin views require appropriate Pretix permissions
 
 ## GDPR
