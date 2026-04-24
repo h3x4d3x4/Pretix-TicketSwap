@@ -15,7 +15,7 @@ When installed on a Pretix event, the plugin automatically:
 - **Delists tickets** when orders are cancelled
 - **Handles SecureSwap** — when a ticket is resold, the old barcode is invalidated and a new one is generated in Pretix so the buyer can enter the venue
 
-Incoming TicketSwap webhooks are verified via HMAC-SHA256 and routed to the correct Pretix event.
+Incoming TicketSwap webhooks are verified via HMAC-SHA256 and routed to the correct Pretix event. Replays are short-circuited with a cache-backed seen-set.
 
 ## Architecture
 
@@ -36,10 +36,13 @@ Signal handlers (signals.py)          Webhook endpoint (views.py)
 ```
 
 **Key design decisions:**
-- Signal handlers are lightweight dispatchers — all API work lives in `tasks.py` (can be wrapped with `@shared_task` for Celery when needed)
-- Connection status is cached (5-min TTL) to avoid API calls on every page load
-- `meta_info` is handled safely regardless of whether Pretix stores it as a dict or JSON string
-- Idempotency guards prevent duplicate ticket listings if signals fire twice
+- Signal handlers dispatch via `transaction.on_commit` so TicketSwap API work never blocks or rolls back a Pretix order — even a full API outage leaves the checkout flow untouched
+- All POST/PUT/DELETE carry a stable `Idempotency-Key` header; auto-retry at the HTTP layer is restricted to idempotent methods (GET/HEAD/OPTIONS) so transient 5xx can't duplicate events or listings
+- Event creation is serialised via row-level lock (`select_for_update`) + re-read guard
+- Webhook event lookup is O(1) via a cached `ticketswap_event_id → Event` map; webhook position lookup uses a DB filter, not a Python scan
+- Webhook deliveries are de-duplicated for 6h by webhook id (or payload hash as fallback)
+- `meta_info` is a Pretix TextField — every write goes through `utils.dump_meta` (JSON-serialise) and every read through `utils.ensure_dict`
+- Connection status and event lookups are cached to keep admin pages and webhook path snappy
 
 ## Requirements
 
@@ -78,8 +81,10 @@ Use the **Test Connection** button to verify credentials before saving.
 Point TicketSwap's webhook to:
 
 ```
-https://your-pretix-instance/ticketswap/webhook/
+https://your-pretix-instance/_ticketswap/webhook/
 ```
+
+Signatures can be sent either as a bare hex digest or in the `sha256=<hex>` form. The payload must include an `event_id` (your TicketSwap event ID) so the plugin can route it to the correct Pretix event, and ideally an `id` field for replay-dedup.
 
 The plugin handles these event types:
 - `ticket.sold` — marks the position as sold
@@ -121,29 +126,35 @@ isort --check-only pretix_ticketswap/
 pretix_ticketswap/
 ├── __init__.py              # Version
 ├── apps.py                  # Django AppConfig + PretixPluginMeta
-├── ticketswap_api.py        # API client (shared session, retry, SSRF guard)
-├── tasks.py                 # Task functions (sync, list, delist) — Celery-ready
-├── signals.py               # Lightweight signal dispatchers
-├── views.py                 # Dashboard, settings, test connection, webhook
-├── forms.py                 # Settings form with validation
-├── urls.py                  # URL routing (4 endpoints)
-├── utils.py                 # Shared helpers (ensure_dict)
+├── ticketswap_api.py        # API client (shared session, retry, idempotency, SSRF guard)
+├── tasks.py                 # Task functions (sync/list/delist + ensure_ticketswap_event)
+├── signals.py               # on_commit-deferred signal dispatchers
+├── views.py                 # Dashboard, settings, test connection, webhook, manual actions
+├── forms.py                 # Settings form (stored-secret aware)
+├── urls.py                  # URL routing (5 endpoints)
+├── utils.py                 # Meta-info serialisation helpers (ensure_dict / dump_meta)
 ├── data_shredder.py         # GDPR-compliant data deletion
 ├── templates/               # Admin dashboard + settings page
 ├── locale/                  # EN + PT translations (.po + .mo)
 └── tests/
-    └── test_api.py          # API client tests (15 test cases)
+    ├── test_api.py          # Legacy API client tests (13)
+    ├── test_api_client.py   # Idempotency key, error mapping, signature prefix (10)
+    ├── test_forms.py        # Stored-secret UX (5)
+    ├── test_signals.py      # Scheduling and dispatch (4)
+    └── test_utils.py        # ensure_dict/dump_meta round-trip (10)
 ```
 
 ## Security
 
-- Webhook payloads are verified with HMAC-SHA256 signatures
+- Webhook payloads are verified with HMAC-SHA256 signatures; both `sha256=<hex>` and bare-hex formats are accepted; constant-time comparison
+- Webhook replay protection (6h window keyed on webhook `id` or payload hash)
 - Payload size limited to 64KB
 - No internal error details leaked in responses
-- API credentials stored in Pretix's Hierarkey (per-event encrypted settings)
+- API credentials stored in Pretix's Hierarkey (per-event settings); empty-string credentials force sandbox mode rather than silently authenticating
 - SSRF protection on API endpoint construction
 - XSS-safe template rendering (user-controlled data uses createTextNode, not innerHTML)
 - All admin views require appropriate Pretix permissions
+- Idempotency keys on every mutating request prevent duplicates on transient failure retries
 
 ## GDPR
 

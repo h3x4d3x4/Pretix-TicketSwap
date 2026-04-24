@@ -1,106 +1,96 @@
 """
 Django signal handlers for Pretix-TicketSwap integration.
 
-Signal handlers are lightweight dispatchers that offload actual API work
-to tasks (tasks.py) to avoid blocking the Django request/response cycle.
+Signal handlers are lightweight dispatchers. They schedule the actual
+API work to run after the current DB transaction commits (via
+``transaction.on_commit``) so a slow or failing TicketSwap call can
+never block or roll back a Pretix order.
 """
 
 import logging
 
+from django.db import transaction
 from django.dispatch import receiver
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
-
-from pretix.base.signals import (
-    order_canceled,
-    order_paid,
-    order_placed,
-    register_data_shredders,
-)
+from pretix.base.signals import order_canceled, order_paid, order_placed, register_data_shredders
 from pretix.control.signals import nav_event_settings
 
 logger = logging.getLogger(__name__)
 
 
+def _enabled(event):
+    return event.settings.get("ticketswap_enabled", as_type=bool, default=False)
+
+
+def _schedule(func, *args):
+    """Run ``func(*args)`` once the current DB transaction commits.
+
+    Falls back to immediate execution if ``on_commit`` is not usable
+    (no DB connection available, e.g. in tests or management commands).
+    Any failure in the scheduled work is caught so it cannot propagate
+    into the Pretix order flow.
+    """
+    try:
+        transaction.on_commit(lambda: func(*args))
+        return
+    except Exception:
+        logger.debug("on_commit unavailable, running TicketSwap task inline")
+    try:
+        func(*args)
+    except Exception:
+        logger.exception("TicketSwap task failed")
+
+
 @receiver(order_placed, dispatch_uid="ticketswap_order_placed")
 def handle_order_placed(sender, **kwargs):
-    """
-    Handle order placement - dispatch async sync to TicketSwap.
-
-    Args:
-        sender: Event object
-        **kwargs: Contains 'order' object
-    """
     order = kwargs.get("order")
     event = sender
-
-    if not event.settings.get("ticketswap_enabled", as_type=bool, default=False):
+    if not order or not _enabled(event):
         return
 
-    logger.info("Order placed for event %s: %s — dispatching TicketSwap sync", event.slug, order.code)
-
+    logger.info(
+        "ticketswap: scheduling order-placed sync event=%s order=%s",
+        event.slug, order.code,
+    )
     from .tasks import sync_order_to_ticketswap
-    sync_order_to_ticketswap(event.pk, order.pk)
+    _schedule(sync_order_to_ticketswap, event.pk, order.pk)
 
 
 @receiver(order_paid, dispatch_uid="ticketswap_order_paid")
 def handle_order_paid(sender, **kwargs):
-    """
-    Handle order payment - dispatch async ticket listing on TicketSwap.
-
-    Args:
-        sender: Event object
-        **kwargs: Contains 'order' object
-    """
     order = kwargs.get("order")
     event = sender
-
-    if not event.settings.get("ticketswap_enabled", as_type=bool, default=False):
+    if not order or not _enabled(event):
         return
-
     if not event.settings.get("ticketswap_auto_enable_resale", as_type=bool, default=True):
         return
 
-    logger.info("Order paid for event %s: %s — dispatching ticket listing", event.slug, order.code)
-
+    logger.info(
+        "ticketswap: scheduling order-paid listing event=%s order=%s",
+        event.slug, order.code,
+    )
     from .tasks import list_tickets_for_order
-    list_tickets_for_order(event.pk, order.pk)
+    _schedule(list_tickets_for_order, event.pk, order.pk)
 
 
 @receiver(order_canceled, dispatch_uid="ticketswap_order_canceled")
 def handle_order_canceled(sender, **kwargs):
-    """
-    Handle order cancellation - dispatch async ticket delisting.
-
-    Args:
-        sender: Event object
-        **kwargs: Contains 'order' object
-    """
     order = kwargs.get("order")
     event = sender
-
-    if not event.settings.get("ticketswap_enabled", as_type=bool, default=False):
+    if not order or not _enabled(event):
         return
 
-    logger.info("Order canceled for event %s: %s — dispatching ticket delisting", event.slug, order.code)
-
+    logger.info(
+        "ticketswap: scheduling order-canceled delisting event=%s order=%s",
+        event.slug, order.code,
+    )
     from .tasks import delist_tickets_for_order
-    delist_tickets_for_order(event.pk, order.pk)
+    _schedule(delist_tickets_for_order, event.pk, order.pk)
 
 
 @receiver(nav_event_settings, dispatch_uid="ticketswap_nav_settings")
 def add_settings_nav(sender, request, **kwargs):
-    """
-    Add TicketSwap settings to event navigation.
-
-    Args:
-        sender: Event object
-        request: HTTP request
-        **kwargs: Additional arguments
-
-    Returns:
-        Navigation item dictionary
-    """
     return [
         {
             "label": _("TicketSwap"),
@@ -121,16 +111,5 @@ def add_settings_nav(sender, request, **kwargs):
 
 @receiver(register_data_shredders, dispatch_uid="ticketswap_register_shredder")
 def register_shredder(sender, **kwargs):
-    """
-    Register the TicketSwap data shredder for GDPR compliance.
-
-    Args:
-        sender: Event object
-        **kwargs: Additional arguments
-
-    Returns:
-        Data shredder class
-    """
     from .data_shredder import TicketSwapDataShredder
-
     return TicketSwapDataShredder

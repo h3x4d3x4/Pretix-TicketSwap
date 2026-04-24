@@ -6,13 +6,25 @@ import json
 
 
 def ensure_dict(meta_info):
-    """Safely convert meta_info to a dict regardless of storage format.
+    """Normalise Pretix's ``meta_info`` field to a Python dict.
 
-    Pretix stores meta_info as either a dict or a JSON string depending
-    on the context.  This helper normalises both forms.
+    Pretix stores ``meta_info`` as a JSON-encoded string in a TextField,
+    but different code paths may hand us a str, a dict, or ``None``.
     """
     if isinstance(meta_info, str):
-        return json.loads(meta_info) if meta_info else {}
+        if not meta_info:
+            return {}
+        try:
+            return json.loads(meta_info)
+        except (ValueError, TypeError):
+            return {}
     if meta_info is None:
         return {}
-    return meta_info
+    if isinstance(meta_info, dict):
+        return meta_info
+    return {}
+
+
+def dump_meta(meta):
+    """Serialise a meta dict back to the JSON string Pretix expects."""
+    return json.dumps(meta or {}, ensure_ascii=False)

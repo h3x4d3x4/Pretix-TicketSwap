@@ -7,10 +7,9 @@ Handles deletion of personal data stored by the plugin.
 import json
 
 from django.utils.translation import gettext_lazy as _
-
 from pretix.base.shredder import BaseDataShredder
 
-from .utils import ensure_dict
+from .utils import dump_meta, ensure_dict
 
 
 class TicketSwapDataShredder(BaseDataShredder):
@@ -88,14 +87,14 @@ class TicketSwapDataShredder(BaseDataShredder):
             meta = ensure_dict(order.meta_info)
             if "ticketswap" in meta:
                 del meta["ticketswap"]
-                order.meta_info = meta
+                order.meta_info = dump_meta(meta)
                 orders_to_update.append(order)
 
             for position in order.positions.all():
                 pos_meta = ensure_dict(position.meta_info)
                 if "ticketswap" in pos_meta:
                     del pos_meta["ticketswap"]
-                    position.meta_info = pos_meta
+                    position.meta_info = dump_meta(pos_meta)
                     positions_to_update.append(position)
 
         # Bulk update for efficiency

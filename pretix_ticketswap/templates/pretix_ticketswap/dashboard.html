@@ -5,158 +5,271 @@
 {% block title %}{% trans "TicketSwap Dashboard" %}{% endblock %}
 
 {% block content %}
-<h1>{% trans "TicketSwap Integration Dashboard" %}</h1>
+<div class="clearfix" style="margin-bottom: 10px;">
+    <h1 style="display: inline-block;">{% trans "TicketSwap Integration" %}</h1>
+    <div class="pull-right" style="padding-top: 18px;">
+        <a href="{% url 'plugins:pretix_ticketswap:settings' event=request.event.slug organizer=request.organizer.slug %}"
+           class="btn btn-default">
+            <i class="fa fa-cog"></i> {% trans "Settings" %}
+        </a>
+    </div>
+</div>
+
+{# Top-of-page status banner #}
+{% if not plugin_enabled %}
+<div class="alert alert-warning">
+    <i class="fa fa-pause-circle"></i>
+    <strong>{% trans "Integration is disabled." %}</strong>
+    {% trans "No orders will be synced to TicketSwap until you enable it." %}
+    <a href="{% url 'plugins:pretix_ticketswap:settings' event=request.event.slug organizer=request.organizer.slug %}"
+       class="alert-link">{% trans "Open settings →" %}</a>
+</div>
+{% elif sandbox_mode %}
+<div class="alert alert-info">
+    <i class="fa fa-flask"></i>
+    <strong>{% trans "Sandbox mode." %}</strong>
+    {% trans "API calls are simulated locally. Add your TicketSwap API credentials in settings to go live." %}
+</div>
+{% elif connection_status == 'failed' %}
+<div class="alert alert-danger">
+    <i class="fa fa-exclamation-triangle"></i>
+    <strong>{% trans "Cannot reach TicketSwap with the configured credentials." %}</strong>
+    {% trans "Orders placed now may not sync. Review your API key and secret in settings." %}
+</div>
+{% elif connection_status == 'connected' and not webhook_secret_configured %}
+<div class="alert alert-warning">
+    <i class="fa fa-shield"></i>
+    <strong>{% trans "Webhook secret missing." %}</strong>
+    {% trans "Outbound sync is working, but incoming TicketSwap events (sold / transferred / cancelled) will be rejected until you configure the webhook secret in settings." %}
+</div>
+{% endif %}
 
 <div class="row">
     <!-- Connection Status Card -->
     <div class="col-md-4">
         <div class="panel panel-{% if connection_status == 'connected' %}success{% elif connection_status == 'not_configured' %}warning{% else %}danger{% endif %}">
             <div class="panel-heading">
-                <h3 class="panel-title">{% trans "Connection Status" %}</h3>
+                <h3 class="panel-title">{% trans "Connection" %}</h3>
             </div>
             <div class="panel-body text-center">
                 {% if connection_status == 'connected' %}
                     <i class="fa fa-check-circle fa-3x text-success"></i>
                     <h4>{% trans "Connected" %}</h4>
-                    <p class="text-muted">{% trans "API connection is active" %}</p>
+                    <p class="text-muted">
+                        {% if sandbox_mode %}{% trans "Sandbox session" %}{% else %}{% trans "Live API session" %}{% endif %}
+                    </p>
                 {% elif connection_status == 'not_configured' %}
                     <i class="fa fa-exclamation-triangle fa-3x text-warning"></i>
-                    <h4>{% trans "Not Configured" %}</h4>
-                    <p class="text-muted">{% trans "Please configure API credentials" %}</p>
-                    <a href="{% url 'plugins:pretix_ticketswap:settings' event=request.event.slug organizer=request.organizer.slug %}" class="btn btn-primary">
-                        {% trans "Configure Now" %}
+                    <h4>{% trans "Not configured" %}</h4>
+                    <p class="text-muted">{% trans "Add API credentials to get started" %}</p>
+                    <a href="{% url 'plugins:pretix_ticketswap:settings' event=request.event.slug organizer=request.organizer.slug %}"
+                       class="btn btn-primary btn-sm">
+                        {% trans "Configure now" %}
                     </a>
                 {% else %}
                     <i class="fa fa-times-circle fa-3x text-danger"></i>
-                    <h4>{% trans "Connection Failed" %}</h4>
-                    <p class="text-muted">{% trans "Check your API credentials" %}</p>
-                {% endif %}
-                
-                {% if sandbox_mode %}
-                    <div class="alert alert-info" style="margin-top: 15px;">
-                        <i class="fa fa-flask"></i> {% trans "Sandbox Mode Active" %}
-                    </div>
+                    <h4>{% trans "Connection failed" %}</h4>
+                    <p class="text-muted">{% trans "Check API credentials" %}</p>
                 {% endif %}
             </div>
         </div>
     </div>
 
-    <!-- Statistics Card -->
+    <!-- Statistics -->
     <div class="col-md-8">
         <div class="panel panel-default">
             <div class="panel-heading">
-                <h3 class="panel-title">{% trans "Statistics" %}</h3>
+                <h3 class="panel-title">{% trans "This event on TicketSwap" %}</h3>
             </div>
             <div class="panel-body">
                 <div class="row">
                     <div class="col-sm-4 text-center">
-                        <h2 class="text-primary">{{ stats.listed_tickets|default:0 }}</h2>
-                        <p class="text-muted">{% trans "Tickets Listed" %}</p>
+                        <h2 class="text-primary" style="margin-top:0;">{{ stats.listed_tickets|default:0 }}</h2>
+                        <p class="text-muted">
+                            <i class="fa fa-tag"></i> {% trans "Tickets listed" %}
+                        </p>
                     </div>
                     <div class="col-sm-4 text-center">
-                        <h2 class="text-success">{{ stats.sold_tickets|default:0 }}</h2>
-                        <p class="text-muted">{% trans "Tickets Sold" %}</p>
+                        <h2 class="text-success" style="margin-top:0;">{{ stats.sold_tickets|default:0 }}</h2>
+                        <p class="text-muted">
+                            <i class="fa fa-dollar"></i> {% trans "Tickets sold" %}
+                        </p>
                     </div>
                     <div class="col-sm-4 text-center">
-                        <h2 class="text-info">{{ stats.secureswap_transfers|default:0 }}</h2>
-                        <p class="text-muted">{% trans "SecureSwap Transfers" %}</p>
+                        <h2 class="text-info" style="margin-top:0;">{{ stats.secureswap_transfers|default:0 }}</h2>
+                        <p class="text-muted">
+                            <i class="fa fa-exchange"></i> {% trans "SecureSwap transfers" %}
+                        </p>
                     </div>
                 </div>
+
+                {% if plugin_enabled and not auto_enable_resale %}
+                <hr>
+                <p class="text-muted" style="margin: 0;">
+                    <i class="fa fa-info-circle"></i>
+                    {% trans "Auto-enable resale is off — tickets won't be listed automatically when orders are paid." %}
+                </p>
+                {% endif %}
             </div>
         </div>
     </div>
 </div>
 
 <div class="row">
-    <!-- Event Sync Status -->
+    <!-- Event Sync -->
     <div class="col-md-6">
         <div class="panel panel-default">
             <div class="panel-heading">
-                <h3 class="panel-title">{% trans "Event Synchronization" %}</h3>
+                <h3 class="panel-title">{% trans "Event sync" %}</h3>
             </div>
             <div class="panel-body">
                 {% if ticketswap_event_id %}
-                    <dl class="dl-horizontal">
-                        <dt>{% trans "TicketSwap Event ID" %}:</dt>
-                        <dd><code>{{ ticketswap_event_id }}</code></dd>
-                        
-                        <dt>{% trans "Event Name" %}:</dt>
+                    <dl class="dl-horizontal" style="margin-bottom: 0;">
+                        <dt>{% trans "Pretix event" %}</dt>
                         <dd>{{ request.event.name }}</dd>
-                        
-                        <dt>{% trans "Status" %}:</dt>
+
+                        <dt>{% trans "TicketSwap ID" %}</dt>
+                        <dd>
+                            <code id="ts-event-id">{{ ticketswap_event_id }}</code>
+                            <button type="button" class="btn btn-xs btn-default ts-copy"
+                                    data-copy-target="ts-event-id"
+                                    title="{% trans 'Copy' %}">
+                                <i class="fa fa-clipboard"></i>
+                            </button>
+                        </dd>
+
+                        <dt>{% trans "Status" %}</dt>
                         <dd><span class="label label-success">{% trans "Synced" %}</span></dd>
                     </dl>
                 {% else %}
-                    <p class="text-muted">
+                    <p class="text-muted" style="margin-bottom: 10px;">
                         <i class="fa fa-info-circle"></i>
-                        {% trans "Event not yet created on TicketSwap. Enable the integration in settings to create it automatically." %}
+                        {% trans "Event not yet created on TicketSwap." %}
+                        {% if plugin_enabled %}
+                            {% trans "It'll be created automatically when the first order is placed." %}
+                        {% else %}
+                            {% trans "Enable the integration in settings and save — the event will be created." %}
+                        {% endif %}
                     </p>
-                    <a href="{% url 'plugins:pretix_ticketswap:settings' event=request.event.slug organizer=request.organizer.slug %}" class="btn btn-default">
-                        {% trans "Go to Settings" %}
-                    </a>
                 {% endif %}
             </div>
         </div>
     </div>
 
-    <!-- Quick Actions -->
+    <!-- Webhook URL -->
     <div class="col-md-6">
         <div class="panel panel-default">
             <div class="panel-heading">
-                <h3 class="panel-title">{% trans "Quick Actions" %}</h3>
+                <h3 class="panel-title">{% trans "Webhook URL" %}</h3>
             </div>
             <div class="panel-body">
-                <a href="{% url 'plugins:pretix_ticketswap:settings' event=request.event.slug organizer=request.organizer.slug %}" class="btn btn-default btn-block">
-                    <i class="fa fa-cog"></i> {% trans "Plugin Settings" %}
-                </a>
-
-                <a href="https://www.ticketswap.com/" target="_blank" class="btn btn-default btn-block">
-                    <i class="fa fa-external-link"></i> {% trans "Open TicketSwap Dashboard" %}
-                </a>
+                <p class="text-muted" style="margin-bottom: 8px;">
+                    {% trans "Paste this URL into your TicketSwap partner dashboard:" %}
+                </p>
+                <div class="input-group">
+                    <input type="text" id="ts-webhook-url" class="form-control"
+                           value="{{ webhook_url }}" readonly>
+                    <span class="input-group-btn">
+                        <button type="button" class="btn btn-default ts-copy"
+                                data-copy-target="ts-webhook-url"
+                                title="{% trans 'Copy' %}">
+                            <i class="fa fa-clipboard"></i> {% trans "Copy" %}
+                        </button>
+                    </span>
+                </div>
+                {% if not webhook_secret_configured %}
+                <p class="text-warning" style="margin-top: 10px; margin-bottom: 0;">
+                    <i class="fa fa-exclamation-triangle"></i>
+                    {% trans "No webhook secret configured — incoming events will be rejected." %}
+                </p>
+                {% endif %}
             </div>
         </div>
     </div>
 </div>
 
-{% if connection_status == 'connected' %}
+<!-- Recent activity -->
 <div class="row">
     <div class="col-md-12">
         <div class="panel panel-default">
             <div class="panel-heading">
-                <h3 class="panel-title">{% trans "Recent Activity" %}</h3>
+                <h3 class="panel-title">{% trans "Recent activity" %}</h3>
             </div>
             <div class="panel-body">
                 {% if recent_activity %}
-                    <table class="table table-condensed">
+                    <table class="table table-condensed" style="margin-bottom: 0;">
                         <thead>
                             <tr>
+                                <th>{% trans "Order" %}</th>
+                                <th>{% trans "Position" %}</th>
+                                <th>{% trans "TicketSwap ticket" %}</th>
+                                <th>{% trans "State" %}</th>
                                 <th>{% trans "Date" %}</th>
-                                <th>{% trans "Type" %}</th>
-                                <th>{% trans "Description" %}</th>
-                                <th>{% trans "Status" %}</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {% for activity in recent_activity %}
+                            {% for a in recent_activity %}
                             <tr>
-                                <td>{{ activity.date }}</td>
-                                <td>{{ activity.type }}</td>
-                                <td>{{ activity.description }}</td>
-                                <td><span class="label label-{{ activity.status_class }}">{{ activity.status }}</span></td>
+                                <td><code>{{ a.order_code }}</code></td>
+                                <td>#{{ a.position_id }}</td>
+                                <td>{% if a.ticket_id %}<code>{{ a.ticket_id }}</code>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                                <td>
+                                    {% if a.state == 'sold' %}
+                                        <span class="label label-success">{% trans "Sold" %}</span>
+                                    {% elif a.state == 'transferred' %}
+                                        <span class="label label-info">{% trans "Transferred" %}</span>
+                                    {% elif a.state == 'listed' %}
+                                        <span class="label label-primary">{% trans "Listed" %}</span>
+                                    {% elif a.state == 'cancelled' %}
+                                        <span class="label label-default">{% trans "Cancelled" %}</span>
+                                    {% elif a.state == 'synced' %}
+                                        <span class="label label-default">{% trans "Synced" %}</span>
+                                    {% else %}
+                                        <span class="label label-default">{{ a.state }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-muted">{{ a.when|date:"Y-m-d H:i" }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 {% else %}
-                    <p class="text-muted text-center">
+                    <p class="text-muted text-center" style="margin: 0;">
                         <i class="fa fa-inbox"></i>
-                        {% trans "No recent activity" %}
+                        {% if plugin_enabled %}
+                            {% trans "No TicketSwap activity yet. It'll show up here once orders start syncing." %}
+                        {% else %}
+                            {% trans "No activity — integration is disabled." %}
+                        {% endif %}
                     </p>
                 {% endif %}
             </div>
         </div>
     </div>
 </div>
-{% endif %}
 
+<script>
+    // Copy-to-clipboard for the event ID and webhook URL.
+    document.querySelectorAll('.ts-copy').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var target = document.getElementById(btn.dataset.copyTarget);
+            if (!target) return;
+            var text = target.tagName === 'INPUT' ? target.value : target.textContent;
+            var done = function () {
+                var original = btn.innerHTML;
+                btn.innerHTML = '<i class="fa fa-check"></i>';
+                setTimeout(function () { btn.innerHTML = original; }, 1200);
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(done, function () {});
+            } else {
+                // Fallback for older browsers
+                if (target.tagName === 'INPUT') {
+                    target.select();
+                    try { document.execCommand('copy'); done(); } catch (e) {}
+                }
+            }
+        });
+    });
+</script>
 {% endblock %}

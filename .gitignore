@@ -22,3 +22,8 @@ htmlcov/
 pretix-test/
 .secret
 *.sqlite3
+
+# Local tooling workspaces
+.claude/
+.vscode/
+.idea/

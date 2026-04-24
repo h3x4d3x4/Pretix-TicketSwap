@@ -6,6 +6,7 @@ from django.urls import re_path
 
 from .views import (
     TicketSwapDashboardView,
+    TicketSwapOrderActionView,
     TicketSwapSettingsView,
     TicketSwapTestConnectionView,
     TicketSwapWebhookView,
@@ -28,7 +29,12 @@ urlpatterns = [
         name="test_connection",
     ),
     re_path(
-        r'^ticketswap/webhook/$',
+        r'^control/event/(?P<organizer>[^/]+)/(?P<event>[^/]+)/ticketswap/order-action/$',
+        TicketSwapOrderActionView.as_view(),
+        name="order_action",
+    ),
+    re_path(
+        r'^_ticketswap/webhook/$',
         TicketSwapWebhookView.as_view(),
         name="webhook",
     ),
