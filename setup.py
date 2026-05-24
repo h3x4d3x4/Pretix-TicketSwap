@@ -17,8 +17,8 @@ cmdclass = {}
 
 setup(
     name="pretix-ticketswap",
-    version="1.1.0",
-    description="TicketSwap integration for Pretix - enables secure ticket resale with SecureSwap technology",
+    version="2.0.0",
+    description="SecureSwap partner endpoints for Pretix — implements the TicketSwap secondary-ticketing specification",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/h3x4d3x4/Pretix-TicketSwap",

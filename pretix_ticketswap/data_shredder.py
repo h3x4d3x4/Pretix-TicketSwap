@@ -1,7 +1,10 @@
 """
-GDPR-compliant data shredder for TicketSwap plugin.
+GDPR-compliant data shredder for SecureSwap.
 
-Handles deletion of personal data stored by the plugin.
+Strips ``meta_info.ticketswap`` from orders and positions, including the
+customer dict captured during /swap and /personalize. Event-level
+settings (token, venue config) are preserved because they're not
+personal data.
 """
 
 import json
@@ -13,67 +16,49 @@ from .utils import dump_meta, ensure_dict
 
 
 class TicketSwapDataShredder(BaseDataShredder):
-    """
-    Data shredder for TicketSwap integration data.
-
-    Removes all TicketSwap-related data from orders and positions
-    when a user requests data deletion.
-    """
-
-    verbose_name = _("TicketSwap Integration Data")
+    verbose_name = _("SecureSwap (TicketSwap) Data")
     identifier = "ticketswap_data"
     description = _(
-        "This will remove all data stored by the TicketSwap integration plugin, "
-        "including sync status, TicketSwap ticket IDs, and event mappings."
+        "Removes all SecureSwap-related data from orders and positions, "
+        "including buyer details captured during a resale (name, email, "
+        "phone, birthdate) and lock/swap state."
     )
 
     def generate_files(self):
-        """
-        Generate downloadable files containing the user's TicketSwap data.
+        """Emit a JSON export of the data we are about to delete."""
+        orders = list(
+            self.event.orders.filter(
+                meta_info__contains='"ticketswap"'
+            ).prefetch_related("positions")
+        )
 
-        Yields:
-            Tuples of (filename, file_type, file_content)
-        """
-        orders = self.event.orders.filter(
-            meta_info__contains='"ticketswap"'
-        ).prefetch_related("positions")
-
-        if orders.exists():
-            data = []
-            for order in orders:
-                meta = ensure_dict(order.meta_info)
-                ticketswap_data = meta.get("ticketswap", {})
-                if ticketswap_data:
-                    data.append({
+        records = []
+        for order in orders:
+            order_meta = ensure_dict(order.meta_info).get("ticketswap")
+            if order_meta:
+                records.append({
+                    "order_code": order.code,
+                    "scope": "order",
+                    "ticketswap": order_meta,
+                })
+            for position in order.positions.all():
+                pos_meta = ensure_dict(position.meta_info).get("ticketswap")
+                if pos_meta:
+                    records.append({
                         "order_code": order.code,
-                        "ticketswap_event_id": ticketswap_data.get("event_id"),
-                        "synced": ticketswap_data.get("synced"),
+                        "scope": "position",
+                        "position_id": position.id,
+                        "ticketswap": pos_meta,
                     })
 
-                for position in order.positions.all():
-                    pos_meta = ensure_dict(position.meta_info)
-                    pos_ticketswap = pos_meta.get("ticketswap", {})
-                    if pos_ticketswap:
-                        data.append({
-                            "order_code": order.code,
-                            "position_id": position.id,
-                            "ticketswap_ticket_id": pos_ticketswap.get("ticket_id"),
-                            "listed": pos_ticketswap.get("listed"),
-                        })
-
-            if data:
-                yield (
-                    "ticketswap_data.json",
-                    "application/json",
-                    json.dumps(data, indent=2),
-                )
+        if records:
+            yield (
+                "ticketswap_data.json",
+                "application/json",
+                json.dumps(records, indent=2, default=str),
+            )
 
     def shred_data(self):
-        """
-        Remove all TicketSwap data from the database.
-
-        Uses prefetch_related and bulk_update for efficiency.
-        """
         orders = list(
             self.event.orders.filter(
                 meta_info__contains='"ticketswap"'
@@ -89,7 +74,6 @@ class TicketSwapDataShredder(BaseDataShredder):
                 del meta["ticketswap"]
                 order.meta_info = dump_meta(meta)
                 orders_to_update.append(order)
-
             for position in order.positions.all():
                 pos_meta = ensure_dict(position.meta_info)
                 if "ticketswap" in pos_meta:
@@ -97,15 +81,13 @@ class TicketSwapDataShredder(BaseDataShredder):
                     position.meta_info = dump_meta(pos_meta)
                     positions_to_update.append(position)
 
-        # Bulk update for efficiency
         if orders_to_update:
             type(orders_to_update[0]).objects.bulk_update(
                 orders_to_update, ["meta_info"], batch_size=500
             )
-
         if positions_to_update:
             type(positions_to_update[0]).objects.bulk_update(
                 positions_to_update, ["meta_info"], batch_size=500
             )
 
-        return _("TicketSwap integration data has been removed.")
+        return _("SecureSwap data has been removed.")

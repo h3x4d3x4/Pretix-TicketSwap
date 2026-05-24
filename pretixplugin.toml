@@ -1,6 +1,6 @@
 [meta]
 name = "pretix-ticketswap"
-version = "1.1.0"
+version = "2.0.0"
 category = "INTEGRATION"
 min_basever = "2024.7.0"
 
@@ -9,19 +9,22 @@ name = "Andre Vidal"
 email = "andrei@hexadexa.dev"
 
 [description]
-short = "TicketSwap integration for secure ticket resale"
+short = "SecureSwap partner endpoints for Pretix"
 long = """
-This plugin integrates Pretix with TicketSwap's secondary ticket marketplace, 
-enabling secure and fair ticket resale through TicketSwap's SecureSwap technology.
+Implements the TicketSwap SecureSwap secondary-ticketing specification.
+Pretix exposes the partner-side endpoints (validate, swap, personalize,
+events, tickets, lock, personalization-fields) and TicketSwap calls into
+them via a Bearer-token-authenticated organizer-scoped URL.
 
 Features:
-- Automatic event synchronization to TicketSwap
-- SecureSwap integration for ticket invalidation and regeneration
-- Webhook support for real-time updates
-- GDPR-compliant data management
+- Full SecureSwap spec coverage (Validate / Swap / Personalize / Lock /
+  Sealed Ticketing endpoints)
+- Per-organizer partner token + per-event enable toggle
+- Pretix-native PDF rendering with signed expiring URLs
+- GDPR-compliant data shredder
 - Multi-language support (EN, PT)
 
-Requires a TicketSwap partnership and API credentials to use.
+Requires a SecureSwap partnership with TicketSwap and a shared bearer token.
 """
 
 [license]

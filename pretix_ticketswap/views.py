@@ -1,14 +1,19 @@
 """
-Django views for the TicketSwap plugin admin interface and webhook.
+SecureSwap partner endpoints + Pretix admin views.
+
+Partner endpoints implement the OpenAPI spec at
+``https://ticketswap.stoplight.io/docs/secondary-ticketing``. TicketSwap
+calls these; the plugin authenticates with a per-organizer Bearer token
+and returns spec-shaped JSON.
+
+Admin views surface integration state inside Pretix's control panel.
 """
 
-import hashlib
 import json
 import logging
+from typing import Any, Dict, Optional
 
-from django.contrib import messages
-from django.core.cache import cache
-from django.http import Http404, JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils.decorators import method_decorator
@@ -16,74 +21,441 @@ from django.utils.translation import gettext_lazy as _
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import FormView, TemplateView
+from pretix.base.models import Organizer
 from pretix.control.permissions import EventPermissionRequiredMixin
 
-from .forms import TicketSwapSettingsForm
-from .ticketswap_api import TicketSwapAPI, TicketSwapAPIError, TicketSwapAuthError
-from .utils import dump_meta, ensure_dict
+from .auth import (
+    EVENT_ENABLED_SETTING,
+    PARTNER_TOKEN_SETTING,
+    authenticate_partner,
+    enabled_events_for,
+    is_event_enabled,
+)
+from .forms import TicketSwapEventForm, TicketSwapOrganizerForm
+from .personalization import get_fields_for_event
+from .pdf import absolute_pdf_url
+from .serializers import (
+    event_uuid,
+    position_uuid,
+    serialize_generic_event,
+    serialize_ticket_listing,
+    serialize_ticket_type,
+    serialize_validation_event,
+)
+from .ticket_ops import (
+    OrderCancelled,
+    PersonalizationNotAllowed,
+    ResellNotAllowed,
+    TicketAlreadyScanned,
+    TicketAlreadySwapped,
+    TicketOpError,
+    apply_personalization,
+    assert_swappable,
+    find_event_by_uuid,
+    find_position_by_barcode,
+    find_position_by_revoked_barcode,
+    find_position_by_ticket_uuid,
+    find_positions_for_unique_identifier,
+    lock_position,
+    page_events,
+    swap_barcode,
+    unlock_position,
+)
+from .utils import ensure_dict
 
 logger = logging.getLogger(__name__)
 
-# 64 KB is well over real webhook sizes and leaves us plenty of headroom
-# while shielding the view from memory-exhaustion abuse.
-MAX_WEBHOOK_PAYLOAD_SIZE = 65536
-
-# Webhook de-duplication window. Stores recently-seen (event_slug, webhook_id
-# or signature hash) tuples so the same delivery cannot be replayed against
-# us within this period.
-WEBHOOK_REPLAY_TTL = 6 * 60 * 60  # 6h
-
-# TTL for the ticketswap_event_id → Pretix Event.pk reverse lookup cache.
-EVENT_LOOKUP_TTL = 6 * 60 * 60  # 6h
+# Cap on inbound JSON body. Swap/personalize payloads are tiny in practice;
+# 64KB is several orders of magnitude over what the spec needs and shields
+# the endpoints from accidental DOS.
+MAX_BODY_BYTES = 64 * 1024
 
 
-def _conn_cache_key(event):
-    return f"ticketswap_conn_{event.pk}"
+# ---- Helpers ---------------------------------------------------------------
 
 
-def _event_lookup_cache_key(ticketswap_event_id):
-    return f"ticketswap_event_lookup_{ticketswap_event_id}"
+def _no_store(response):
+    """Mark a partner-facing response as non-cacheable.
+
+    Ticket barcodes and PDF URLs are short-lived secrets; we don't want
+    a CDN or proxy to retain them past the request that generated them.
+    """
+    response["Cache-Control"] = "no-store"
+    return response
 
 
-def invalidate_event_lookup_cache(ticketswap_event_id):
-    if ticketswap_event_id:
-        cache.delete(_event_lookup_cache_key(ticketswap_event_id))
+def _json(body, status: int):
+    return _no_store(JsonResponse(body, status=status))
 
 
-def _get_connection_status(event):
-    """Cached connection status — 5 min on success, 1 min on failure."""
-    api_key = event.settings.get("ticketswap_api_key", as_type=str, default="")
-    api_secret = event.settings.get("ticketswap_api_secret", as_type=str, default="")
+def _empty(status: int):
+    return _no_store(HttpResponse(status=status))
 
-    if not api_key or not api_secret:
-        return "not_configured", True
 
-    cached = cache.get(_conn_cache_key(event))
-    if cached is not None:
-        return cached["status"], cached["sandbox"]
+# Per-error-code flags. The spec is subtle here: `valid` means "the ticket
+# is still redeemable at the gate"; `swappable` means "can be resold". A
+# free/deposit ticket is still valid at the gate but not eligible for
+# resale, hence RESELL_NOT_ALLOWED carries valid=True.
+_ERROR_FLAGS = {
+    "RESELL_NOT_ALLOWED": (True, False),
+    "TICKET_NOT_FOUND": (False, False),
+    "TICKET_ALREADY_SWAPPED": (False, False),
+    "TICKET_ALREADY_SCANNED": (False, False),
+    "ORDER_CANCELLED": (False, False),
+    "UNAUTHORIZED": (False, False),
+    "PERSONALIZATION_NOT_ALLOWED": (False, False),
+}
 
+
+def _error_response(barcode: str, error_code: str, status: int) -> JsonResponse:
+    """Build the spec's ``ErrorResponse`` shape."""
+    valid, swappable = _ERROR_FLAGS.get(error_code, (False, False))
+    return _json(
+        {
+            "barcode": barcode or "",
+            "valid": valid,
+            "swappable": swappable,
+            "error": error_code,
+        },
+        status=status,
+    )
+
+
+def _read_json_body(request) -> Optional[Dict[str, Any]]:
+    raw = request.body
+    if len(raw) > MAX_BODY_BYTES:
+        return None
     try:
-        api = TicketSwapAPI(api_key, api_secret)
-        status = "connected" if api.test_connection() else "failed"
-        sandbox = api.sandbox_mode
-        cache.set(_conn_cache_key(event), {"status": status, "sandbox": sandbox}, 300)
-        return status, sandbox
-    except (TicketSwapAPIError, TicketSwapAuthError):
-        cache.set(_conn_cache_key(event), {"status": "failed", "sandbox": True}, 60)
-        return "failed", True
+        data = json.loads(raw.decode("utf-8")) if raw else {}
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
-def _compute_stats_and_activity(event, activity_limit=8):
-    """Stats + most-recent-activity from position meta_info.
+def _validate_customer(customer: Any) -> bool:
+    """Spec's CustomerBase: firstName, lastName, email, language all required.
 
-    One DB pass (most-recent first) populates both the counters and the
-    short activity list shown on the dashboard. Bounded by ``meta_info``
-    containing the ``ticketswap`` marker so events with millions of
-    plain positions stay cheap.
+    We accept the call even if these are missing, but log a warning so an
+    operator can debug a TicketSwap-side regression. A strict reject would
+    block resales for a typo on the partner side; that's worse than a
+    permissive accept.
+    """
+    if not isinstance(customer, dict):
+        return False
+    return all(
+        isinstance(customer.get(k), str) and customer.get(k)
+        for k in ("firstName", "lastName", "email", "language")
+    )
+
+
+def _int_query(request, name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = request.GET.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, v))
+
+
+# ---- Partner endpoints -----------------------------------------------------
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class ValidateView(View):
+    """GET /validate?barcode=…
+
+    On success returns ``ValidationResponse``; on business-rule failure
+    returns 200 + ``ErrorResponse`` per spec. Only auth failures and
+    missing tickets are non-200.
+    """
+
+    def get(self, request, organizer):
+        organizer_obj, error = authenticate_partner(request, organizer)
+        if error is not None:
+            return error
+
+        barcode = request.GET.get("barcode", "").strip()
+        if not barcode:
+            return _error_response("", "TICKET_NOT_FOUND", 404)
+
+        position = find_position_by_barcode(organizer_obj, barcode)
+        if position is None:
+            # Distinguish "never existed" from "known but already swapped" — the
+            # spec's two error codes drive different TicketSwap UX paths.
+            if find_position_by_revoked_barcode(organizer_obj, barcode) is not None:
+                return _error_response(barcode, "TICKET_ALREADY_SWAPPED", 200)
+            return _error_response(barcode, "TICKET_NOT_FOUND", 404)
+
+        try:
+            assert_swappable(position)
+        except TicketOpError as e:
+            return _error_response(barcode, e.error_code, e.http_status)
+
+        pdf_url = absolute_pdf_url(request, position) or None
+
+        return _json({
+            "id": position_uuid(position),
+            "barcode": position.secret,
+            "swappable": True,
+            "valid": True,
+            "scanned_at": None,
+            "pdf": pdf_url,
+            "personalization_required": _personalization_required(position.order.event),
+            "event": serialize_validation_event(position.order.event),
+            "type": serialize_ticket_type(position.item, position),
+        }, status=200)
+
+
+def _personalization_required(event) -> bool:
+    return bool(event.settings.get(
+        "ticketswap_personalization_required", as_type=bool, default=False
+    ))
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class SwapView(View):
+    """POST /swap — cancel old barcode, issue new one + PDF URL."""
+
+    def post(self, request, organizer):
+        organizer_obj, error = authenticate_partner(request, organizer)
+        if error is not None:
+            return error
+
+        data = _read_json_body(request)
+        if data is None:
+            return _error_response("", "TICKET_NOT_FOUND", 400)
+
+        ticket = data.get("ticket") or {}
+        customer = data.get("customer") or {}
+        barcode = (ticket.get("barcode") or "").strip()
+        if not barcode:
+            return _error_response("", "TICKET_NOT_FOUND", 404)
+
+        if not _validate_customer(customer):
+            logger.warning(
+                "secureswap: /swap received malformed customer payload barcode=%s",
+                barcode,
+            )
+
+        position = find_position_by_barcode(organizer_obj, barcode)
+        if position is None:
+            return _error_response(barcode, "TICKET_NOT_FOUND", 404)
+
+        try:
+            assert_swappable(position)
+        except (TicketAlreadySwapped, TicketAlreadyScanned, OrderCancelled):
+            # Swap is a mutating endpoint — spec doesn't list these as 200,
+            # so we surface 400 here (different from /validate behavior).
+            return _error_response(barcode, "RESELL_NOT_ALLOWED", 400)
+        except ResellNotAllowed:
+            return _error_response(barcode, "RESELL_NOT_ALLOWED", 400)
+        except TicketOpError as e:
+            return _error_response(barcode, e.error_code, 400)
+
+        try:
+            new_barcode = swap_barcode(position, customer)
+        except TicketOpError as e:
+            return _error_response(barcode, e.error_code, 400)
+
+        pretix_only_pdf = _personalization_required(position.order.event)
+        # Per spec, /swap MAY return pdf:null when /personalize is expected
+        # next. We honor that for events that require personalization.
+        pdf_url = None if pretix_only_pdf else absolute_pdf_url(request, position)
+
+        body = {
+            "id": position_uuid(position),
+            "barcode": new_barcode,
+            "pdf": pdf_url,
+        }
+        if pretix_only_pdf:
+            body["personalization_required"] = True
+        return _json(body, status=201)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class PersonalizeView(View):
+    """POST /personalize — apply attendee info + regenerate PDF."""
+
+    def post(self, request, organizer):
+        organizer_obj, error = authenticate_partner(request, organizer)
+        if error is not None:
+            return error
+
+        data = _read_json_body(request)
+        if data is None:
+            return _error_response("", "PERSONALIZATION_NOT_ALLOWED", 400)
+
+        ticket = data.get("ticket") or {}
+        customer = data.get("customer") or {}
+        barcode = (ticket.get("barcode") or "").strip()
+        if not barcode:
+            return _error_response("", "TICKET_NOT_FOUND", 404)
+
+        position = find_position_by_barcode(organizer_obj, barcode)
+        if position is None:
+            return _error_response(barcode, "TICKET_NOT_FOUND", 404)
+
+        # Personalization is permitted only if the event opts into it. If
+        # the event doesn't ask for personalization, spec says: discard the
+        # data and return success so TicketSwap can still deliver the PDF.
+        if not _personalization_required(position.order.event):
+            return _json({
+                "id": position_uuid(position),
+                "barcode": position.secret,
+                "pdf": absolute_pdf_url(request, position),
+            }, status=200)
+
+        try:
+            apply_personalization(position, customer)
+        except PersonalizationNotAllowed:
+            return _error_response(barcode, "PERSONALIZATION_NOT_ALLOWED", 400)
+        except TicketOpError as e:
+            return _error_response(barcode, e.error_code, e.http_status)
+
+        return _json({
+            "id": position_uuid(position),
+            "barcode": position.secret,
+            "pdf": absolute_pdf_url(request, position),
+        }, status=200)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class PersonalizationFieldsView(View):
+    """GET /personalization-fields/{barcode}"""
+
+    def get(self, request, organizer, barcode):
+        organizer_obj, error = authenticate_partner(request, organizer)
+        if error is not None:
+            return error
+
+        position = find_position_by_barcode(organizer_obj, barcode)
+        if position is None:
+            # Spec returns 404 with empty content; we mirror that.
+            return _empty(404)
+
+        fields = get_fields_for_event(position.order.event)
+        return _no_store(JsonResponse(fields, safe=False, status=200))
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class EventsListView(View):
+    """GET /events?page=N&page_size=M"""
+
+    def get(self, request, organizer):
+        organizer_obj, error = authenticate_partner(request, organizer)
+        if error is not None:
+            return error
+
+        page = _int_query(request, "page", default=1, minimum=1, maximum=10_000)
+        page_size = _int_query(request, "page_size", default=20, minimum=1, maximum=200)
+
+        events, total = page_events(organizer_obj, page, page_size)
+        total_pages = max(1, (total + page_size - 1) // page_size) if total else 0
+
+        return _json({
+            "events": [serialize_generic_event(e) for e in events],
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+                "total_results": total,
+            },
+        }, status=200)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class EventGetView(View):
+    """GET /events/{id}"""
+
+    def get(self, request, organizer, id):  # noqa: A002 — matches spec param name
+        organizer_obj, error = authenticate_partner(request, organizer)
+        if error is not None:
+            return error
+
+        event = find_event_by_uuid(organizer_obj, id)
+        if event is None:
+            return _empty(404)
+        return _json(serialize_generic_event(event), status=200)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class TicketsListView(View):
+    """GET /tickets/{uniqueIdentifier}"""
+
+    def get(self, request, organizer, uniqueIdentifier):  # noqa: N803
+        organizer_obj, error = authenticate_partner(request, organizer)
+        if error is not None:
+            return error
+
+        positions = find_positions_for_unique_identifier(
+            organizer_obj, uniqueIdentifier
+        )
+        if not positions:
+            return _json({"error_code": "TICKETS_NOT_FOUND"}, status=404)
+
+        return _json({
+            "tickets": [serialize_ticket_listing(p) for p in positions],
+        }, status=200)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class LockView(View):
+    """POST /lock/{ticketId} + DELETE /lock/{ticketId}"""
+
+    def post(self, request, organizer, ticketId):  # noqa: N803
+        organizer_obj, error = authenticate_partner(request, organizer)
+        if error is not None:
+            return error
+
+        position = find_position_by_ticket_uuid(organizer_obj, ticketId)
+        if position is None:
+            return _empty(404)
+
+        try:
+            lock_position(position)
+        except OrderCancelled:
+            return _json({"error_code": "ORDER_CANCELLED"}, status=409)
+        except TicketOpError as e:
+            return _json({"error_code": e.error_code}, status=409)
+        return _empty(201)
+
+    def delete(self, request, organizer, ticketId):  # noqa: N803
+        organizer_obj, error = authenticate_partner(request, organizer)
+        if error is not None:
+            return error
+
+        position = find_position_by_ticket_uuid(organizer_obj, ticketId)
+        if position is None:
+            return _empty(404)
+
+        unlock_position(position)
+        return _empty(204)
+
+
+# ---- Admin: dashboard + settings ------------------------------------------
+
+
+def _build_partner_base_url(request, organizer_slug: str) -> str:
+    try:
+        path = reverse(
+            "plugins:pretix_ticketswap:partner_root",
+            kwargs={"organizer": organizer_slug},
+        )
+    except Exception:
+        return ""
+    return request.build_absolute_uri(path)
+
+
+def _stats(event):
+    """Cheap per-event counters scanned from positions with ``ticketswap``
+    metadata. Bounded by the ``meta_info__contains`` filter so events with
+    millions of plain positions stay cheap.
     """
     from pretix.base.models import OrderPosition
 
-    listed = sold = transferred = 0
+    listed = swapped = personalized = locked = 0
     activity = []
 
     qs = (
@@ -97,54 +469,39 @@ def _compute_stats_and_activity(event, activity_limit=8):
 
     for pos in qs.iterator(chunk_size=500):
         ts = ensure_dict(pos.meta_info).get("ticketswap", {})
-        if ts.get("listed"):
-            listed += 1
-        if ts.get("sold"):
-            sold += 1
-        if ts.get("transferred"):
-            transferred += 1
+        if ts.get("locked"):
+            listed += 1  # spec calls listed-on-TicketSwap "locked" on our side
+            locked += 1
+        if ts.get("swap_count"):
+            swapped += 1
+        if ts.get("personalized"):
+            personalized += 1
 
-        if len(activity) < activity_limit:
+        if len(activity) < 8:
             state = "unknown"
-            if ts.get("transferred"):
-                state = "transferred"
-            elif ts.get("sold"):
-                state = "sold"
-            elif ts.get("cancelled"):
-                state = "cancelled"
-            elif ts.get("listed"):
-                state = "listed"
-            elif ts.get("synced"):
-                state = "synced"
+            if ts.get("personalized"):
+                state = "personalized"
+            elif ts.get("swap_count"):
+                state = "swapped"
+            elif ts.get("locked"):
+                state = "locked"
             activity.append({
                 "order_code": pos.order.code,
                 "position_id": pos.id,
-                "ticket_id": ts.get("ticket_id"),
                 "state": state,
                 "when": pos.order.datetime,
             })
 
-    stats = {
+    return {
         "listed_tickets": listed,
-        "sold_tickets": sold,
-        "secureswap_transfers": transferred,
-    }
-    return stats, activity
-
-
-def _build_webhook_url(request):
-    """Absolute URL of the webhook endpoint, for the admin to paste
-    into the TicketSwap partnership dashboard."""
-    try:
-        return request.build_absolute_uri(
-            reverse("plugins:pretix_ticketswap:webhook")
-        )
-    except Exception:
-        return ""
+        "secureswap_transfers": swapped,
+        "personalized_tickets": personalized,
+        "locked_tickets": locked,
+    }, activity
 
 
 class TicketSwapDashboardView(EventPermissionRequiredMixin, TemplateView):
-    """Dashboard: connection status, sync state, and statistics."""
+    """Event-level dashboard: state, partner URL, recent activity."""
 
     template_name = "pretix_ticketswap/dashboard.html"
     permission = "can_view_orders"
@@ -152,459 +509,98 @@ class TicketSwapDashboardView(EventPermissionRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         event = self.request.event
+        organizer = self.request.organizer
 
-        context["connection_status"], context["sandbox_mode"] = _get_connection_status(event)
-        context["ticketswap_event_id"] = event.settings.get(
-            "ticketswap_event_id", as_type=str, default=""
+        context["plugin_enabled"] = is_event_enabled(event)
+        context["partner_token_configured"] = bool(
+            organizer.settings.get(PARTNER_TOKEN_SETTING, as_type=str, default="")
         )
-        context["stats"], context["recent_activity"] = _compute_stats_and_activity(event)
-        context["plugin_enabled"] = event.settings.get(
-            "ticketswap_enabled", as_type=bool, default=False
-        )
-        context["auto_enable_resale"] = event.settings.get(
-            "ticketswap_auto_enable_resale", as_type=bool, default=True
-        )
-        context["webhook_secret_configured"] = bool(
-            event.settings.get("ticketswap_webhook_secret", as_type=str, default="")
-        )
-        context["webhook_url"] = _build_webhook_url(self.request)
+        context["partner_base_url"] = _build_partner_base_url(self.request, organizer.slug)
+        context["personalization_required"] = _personalization_required(event)
+        context["stats"], context["recent_activity"] = _stats(event)
+        context["event_uuid"] = event_uuid(event)
         return context
 
 
-class TicketSwapTestConnectionView(EventPermissionRequiredMixin, View):
-    """AJAX endpoint to validate credentials from the settings form."""
-
-    permission = "can_change_event_settings"
-
-    def post(self, request, *args, **kwargs):
-        try:
-            data = json.loads(request.body.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return JsonResponse(
-                {"success": False, "message": str(_("Invalid request"))},
-                status=400,
-            )
-
-        api_key = data.get("api_key")
-        api_secret = data.get("api_secret")
-
-        # Allow testing with the stored secret if the password field is blank
-        if api_key and not api_secret:
-            api_secret = request.event.settings.get(
-                "ticketswap_api_secret", as_type=str, default=""
-            )
-
-        if not api_key or not api_secret:
-            return JsonResponse({
-                "success": False,
-                "message": str(_("API key and secret are required")),
-            })
-
-        try:
-            api = TicketSwapAPI(api_key=api_key, api_secret=api_secret)
-            if api.test_connection():
-                cache.delete(_conn_cache_key(request.event))
-                return JsonResponse({
-                    "success": True,
-                    "message": str(_("Connection successful! API credentials are valid.")),
-                })
-            return JsonResponse({
-                "success": False,
-                "message": str(_("Connection failed. Please check your credentials.")),
-            })
-        except TicketSwapAuthError:
-            return JsonResponse({
-                "success": False,
-                "message": str(_("Invalid API credentials")),
-            })
-        except Exception:
-            logger.exception("ticketswap: connection test error")
-            return JsonResponse({
-                "success": False,
-                "message": str(_(
-                    "Connection test failed. Please verify your credentials and try again."
-                )),
-            })
-
-
-def _resolve_event_for_webhook(ticketswap_event_id):
-    """Find the Pretix Event whose settings map to ``ticketswap_event_id``.
-
-    Results are cached for ``EVENT_LOOKUP_TTL`` so the webhook path is
-    O(1) on repeat deliveries. A negative cache (``None``) is stored
-    briefly so a flood of bad event_ids doesn't repeatedly hit the DB.
-    """
-    from pretix.base.models import Event
-
-    cache_key = _event_lookup_cache_key(ticketswap_event_id)
-    cached = cache.get(cache_key)
-    if cached is not None:
-        if cached == "__MISS__":
-            return None
-        try:
-            return Event.objects.select_related("organizer").get(pk=cached)
-        except Event.DoesNotExist:
-            cache.delete(cache_key)
-
-    for candidate in Event.objects.filter(
-        plugins__contains="pretix_ticketswap"
-    ).select_related("organizer"):
-        stored_id = candidate.settings.get(
-            "ticketswap_event_id", as_type=str, default=""
-        )
-        if stored_id == ticketswap_event_id:
-            cache.set(cache_key, candidate.pk, EVENT_LOOKUP_TTL)
-            return candidate
-
-    cache.set(cache_key, "__MISS__", 60)
-    return None
-
-
-def _find_position_by_ticket_id(event, ticket_id):
-    """DB-filter lookup for a position whose meta_info stores ``ticket_id``."""
-    from pretix.base.models import OrderPosition
-
-    # The substring is unique enough to narrow candidates at the DB level.
-    marker = json.dumps({"ticket_id": ticket_id})[1:-1]  # drops the outer braces
-    qs = OrderPosition.objects.filter(
-        order__event=event,
-        meta_info__contains=marker,
-    ).select_related("order")
-    for position in qs.iterator(chunk_size=50):
-        meta = ensure_dict(position.meta_info)
-        if meta.get("ticketswap", {}).get("ticket_id") == ticket_id:
-            return position, meta
-    return None, None
-
-
-class TicketSwapWebhookView(View):
-    """Webhook endpoint for TicketSwap notifications."""
-
-    @method_decorator(csrf_exempt)
-    def dispatch(self, *args, **kwargs):
-        return super().dispatch(*args, **kwargs)
-
-    def post(self, request, *args, **kwargs):
-        raw_body = request.body
-        if len(raw_body) > MAX_WEBHOOK_PAYLOAD_SIZE:
-            return JsonResponse({"error": "Payload too large"}, status=413)
-
-        try:
-            data = json.loads(raw_body.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-        event_type = data.get("event")
-        ticketswap_event_id = data.get("event_id")
-        if not ticketswap_event_id or not isinstance(ticketswap_event_id, str):
-            logger.warning("ticketswap: webhook missing event_id")
-            return JsonResponse({"error": "Missing event_id"}, status=400)
-
-        try:
-            event = _resolve_event_for_webhook(ticketswap_event_id)
-        except Exception:
-            logger.exception("ticketswap: error resolving event for webhook")
-            return JsonResponse({"error": "Internal server error"}, status=500)
-
-        if event is None:
-            logger.warning(
-                "ticketswap: unknown ticketswap_event_id=%s", ticketswap_event_id
-            )
-            return JsonResponse({"error": "Unknown event"}, status=404)
-
-        signature = request.META.get("HTTP_X_TICKETSWAP_SIGNATURE", "")
-        webhook_secret = event.settings.get(
-            "ticketswap_webhook_secret", as_type=str, default=""
-        )
-        if not webhook_secret:
-            logger.error(
-                "ticketswap: webhook secret not configured for event=%s", event.slug
-            )
-            return JsonResponse({"error": "Webhook not configured"}, status=500)
-
-        api = TicketSwapAPI()
-        if not api.verify_webhook_signature(raw_body, signature, webhook_secret):
-            logger.warning(
-                "ticketswap: invalid webhook signature event=%s", event.slug
-            )
-            return JsonResponse({"error": "Invalid signature"}, status=401)
-
-        # Replay protection: if we've seen this exact (event, webhook id or
-        # signature) before, respond 200 without re-running the handler.
-        replay_id = (
-            data.get("id")
-            or data.get("webhook_id")
-            or hashlib.sha256(raw_body).hexdigest()
-        )
-        replay_key = f"ticketswap_seen_{event.pk}_{replay_id}"
-        if cache.get(replay_key):
-            logger.info(
-                "ticketswap: duplicate webhook ignored event=%s replay_id=%s",
-                event.slug, replay_id,
-            )
-            return JsonResponse({"status": "ok", "duplicate": True})
-        cache.set(replay_key, True, WEBHOOK_REPLAY_TTL)
-
-        logger.info(
-            "ticketswap: webhook received event=%s type=%s id=%s",
-            event.slug, event_type, replay_id,
-        )
-
-        try:
-            if event_type == "ticket.sold":
-                self._handle_ticket_sold(event, data)
-            elif event_type == "ticket.transferred":
-                self._handle_ticket_transferred(event, data)
-            elif event_type == "ticket.cancelled":
-                self._handle_ticket_cancelled(event, data)
-            else:
-                logger.warning(
-                    "ticketswap: unknown event type event=%s type=%s",
-                    event.slug, event_type,
-                )
-            return JsonResponse({"status": "ok"})
-        except Exception:
-            logger.exception(
-                "ticketswap: webhook processing error event=%s type=%s",
-                event.slug, event_type,
-            )
-            return JsonResponse({"error": "Internal server error"}, status=500)
-
-    def _handle_ticket_sold(self, event, data):
-        ticket_id = data.get("ticket_id")
-        if not ticket_id:
-            return
-        position, meta = _find_position_by_ticket_id(event, ticket_id)
-        if not position:
-            logger.warning(
-                "ticketswap: ticket.sold for unknown ticket event=%s ticket=%s",
-                event.slug, ticket_id,
-            )
-            return
-        meta["ticketswap"]["sold"] = True
-        meta["ticketswap"]["sold_at"] = data.get("sold_at")
-        meta["ticketswap"]["listed"] = False
-        position.meta_info = dump_meta(meta)
-        position.save(update_fields=["meta_info"])
-        logger.info(
-            "ticketswap: marked position sold event=%s pos=%s ticket=%s",
-            event.slug, position.id, ticket_id,
-        )
-
-    def _handle_ticket_transferred(self, event, data):
-        """SecureSwap: invalidate old barcode, install the new one."""
-        old_ticket_id = data.get("old_ticket_id")
-        new_ticket_id = data.get("new_ticket_id")
-        new_barcode = data.get("new_barcode")
-
-        if not old_ticket_id or not new_barcode:
-            logger.error(
-                "ticketswap: SecureSwap missing required fields event=%s", event.slug
-            )
-            return
-
-        position, meta = _find_position_by_ticket_id(event, old_ticket_id)
-        if not position:
-            logger.warning(
-                "ticketswap: SecureSwap for unknown ticket event=%s old_ticket=%s",
-                event.slug, old_ticket_id,
-            )
-            return
-
-        position.secret = new_barcode
-        meta["ticketswap"]["ticket_id"] = new_ticket_id
-        meta["ticketswap"]["transferred"] = True
-        meta["ticketswap"]["old_ticket_id"] = old_ticket_id
-        position.meta_info = dump_meta(meta)
-        position.save(update_fields=["secret", "meta_info"])
-        logger.info(
-            "ticketswap: SecureSwap applied event=%s pos=%s old=%s new=%s",
-            event.slug, position.id, old_ticket_id, new_ticket_id,
-        )
-
-    def _handle_ticket_cancelled(self, event, data):
-        ticket_id = data.get("ticket_id")
-        if not ticket_id:
-            return
-        position, meta = _find_position_by_ticket_id(event, ticket_id)
-        if not position:
-            logger.warning(
-                "ticketswap: ticket.cancelled for unknown ticket event=%s ticket=%s",
-                event.slug, ticket_id,
-            )
-            return
-        meta["ticketswap"]["listed"] = False
-        meta["ticketswap"]["cancelled"] = True
-        position.meta_info = dump_meta(meta)
-        position.save(update_fields=["meta_info"])
-        logger.info(
-            "ticketswap: marked listing cancelled event=%s pos=%s ticket=%s",
-            event.slug, position.id, ticket_id,
-        )
-
-
-class TicketSwapSettingsView(EventPermissionRequiredMixin, FormView):
-    """Event-level configuration for the TicketSwap integration."""
+class TicketSwapEventSettingsView(EventPermissionRequiredMixin, FormView):
+    """Per-event settings: enable toggle, personalization, venue overrides."""
 
     template_name = "pretix_ticketswap/settings.html"
-    form_class = TicketSwapSettingsForm
+    form_class = TicketSwapEventForm
     permission = "can_change_event_settings"
-
-    _secret_fields = {"ticketswap_api_secret", "ticketswap_webhook_secret"}
 
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
         kwargs["event"] = self.request.event
-        kwargs["initial"] = {
-            "ticketswap_enabled": self.request.event.settings.get(
-                "ticketswap_enabled", as_type=bool, default=False
-            ),
-            "ticketswap_api_key": self.request.event.settings.get(
-                "ticketswap_api_key", as_type=str, default=""
-            ),
-            # Password fields intentionally left blank — they preserve the stored value.
-            "ticketswap_auto_enable_resale": self.request.event.settings.get(
-                "ticketswap_auto_enable_resale", as_type=bool, default=True
-            ),
-            "ticketswap_max_resale_price_percent": self.request.event.settings.get(
-                "ticketswap_max_resale_price_percent", as_type=int, default=120
-            ),
-        }
+        kwargs["initial"] = self.form_class.initial_from_event(self.request.event)
         return kwargs
 
     def form_valid(self, form):
-        old_ticketswap_event_id = self.request.event.settings.get(
-            "ticketswap_event_id", as_type=str, default=""
-        )
-
-        for key, value in form.cleaned_data.items():
-            if key in self._secret_fields and not value:
-                continue
-            self.request.event.settings.set(key, value)
-
-        cache.delete(_conn_cache_key(self.request.event))
-        invalidate_event_lookup_cache(old_ticketswap_event_id)
-
-        if form.cleaned_data.get("ticketswap_enabled"):
-            api_key = (
-                form.cleaned_data.get("ticketswap_api_key")
-                or self.request.event.settings.get(
-                    "ticketswap_api_key", as_type=str, default=""
-                )
-            )
-            api_secret = (
-                form.cleaned_data.get("ticketswap_api_secret")
-                or self.request.event.settings.get(
-                    "ticketswap_api_secret", as_type=str, default=""
-                )
-            )
-
-            from .tasks import ensure_ticketswap_event
-
-            try:
-                api = TicketSwapAPI(api_key, api_secret)
-                new_id = ensure_ticketswap_event(self.request.event, api=api)
-                if new_id and new_id != old_ticketswap_event_id:
-                    invalidate_event_lookup_cache(old_ticketswap_event_id)
-                    messages.success(
-                        self.request,
-                        _(
-                            "TicketSwap integration enabled and event created successfully! "
-                            "Event ID: {event_id}"
-                        ).format(event_id=new_id),
-                    )
-                else:
-                    messages.success(
-                        self.request,
-                        _("TicketSwap settings saved successfully!"),
-                    )
-            except TicketSwapAPIError as e:
-                logger.error(
-                    "ticketswap: settings save — event creation failed event=%s err=%s",
-                    self.request.event.slug, e,
-                )
-                messages.warning(
-                    self.request,
-                    _(
-                        "Settings saved, but failed to create event on TicketSwap. "
-                        "You may need to create it manually."
-                    ),
-                )
-        else:
-            messages.success(
-                self.request,
-                _("TicketSwap settings saved successfully!"),
-            )
-
-        return redirect(
-            reverse(
-                "plugins:pretix_ticketswap:settings",
-                kwargs={
-                    "event": self.request.event.slug,
-                    "organizer": self.request.organizer.slug,
-                },
-            )
-        )
+        form.save_to_event(self.request.event)
+        return redirect(reverse(
+            "plugins:pretix_ticketswap:settings",
+            kwargs={
+                "event": self.request.event.slug,
+                "organizer": self.request.organizer.slug,
+            },
+        ))
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        event = self.request.event
-        context["connection_status"], context["sandbox_mode"] = _get_connection_status(event)
-        context["ticketswap_event_id"] = event.settings.get(
-            "ticketswap_event_id", as_type=str, default=""
+        organizer = self.request.organizer
+        context["partner_token_configured"] = bool(
+            organizer.settings.get(PARTNER_TOKEN_SETTING, as_type=str, default="")
         )
-        context["api_secret_stored"] = bool(
-            event.settings.get("ticketswap_api_secret", as_type=str, default="")
+        context["partner_base_url"] = _build_partner_base_url(self.request, organizer.slug)
+        context["organizer_settings_hint"] = _(
+            "The partner token is shared across all events in this organizer. "
+            "Configure it once in the organizer settings."
         )
-        context["webhook_secret_stored"] = bool(
-            event.settings.get("ticketswap_webhook_secret", as_type=str, default="")
-        )
-        context["webhook_url"] = _build_webhook_url(self.request)
         return context
 
 
-class TicketSwapOrderActionView(EventPermissionRequiredMixin, View):
-    """Admin-initiated manual actions for a single order.
+class TicketSwapOrganizerSettingsView(FormView):
+    """Organizer-level settings: the partner token + base URL display.
 
-    Lets an operator re-run sync/list/delist after credential or API
-    issues are resolved, without waiting for a new signal firing.
+    Lives under ``/control/organizer/<organizer>/secureswap/`` so an admin
+    with organizer-level permissions can rotate the partner token without
+    touching every event.
     """
 
-    permission = "can_change_orders"
+    template_name = "pretix_ticketswap/organizer_settings.html"
+    form_class = TicketSwapOrganizerForm
 
-    def post(self, request, *args, **kwargs):
-        action = request.POST.get("action") or ""
-        order_code = request.POST.get("order") or ""
-        if not order_code:
-            return JsonResponse({"success": False, "message": "Missing order"}, status=400)
-
-        from pretix.base.models import Order
+    def dispatch(self, request, *args, **kwargs):
+        from django.http import Http404, HttpResponseForbidden
         try:
-            order = Order.objects.get(event=request.event, code=order_code)
-        except Order.DoesNotExist:
-            raise Http404
+            self.organizer = Organizer.objects.get(slug=kwargs["organizer"])
+        except Organizer.DoesNotExist:
+            raise Http404()
+        if not request.user.has_organizer_permission(
+            self.organizer, "can_change_organizer_settings", request=request
+        ):
+            return HttpResponseForbidden()
+        return super().dispatch(request, *args, **kwargs)
 
-        from .tasks import (
-            delist_tickets_for_order,
-            list_tickets_for_order,
-            sync_order_to_ticketswap,
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["organizer"] = self.organizer
+        kwargs["initial"] = self.form_class.initial_from_organizer(self.organizer)
+        return kwargs
+
+    def form_valid(self, form):
+        form.save_to_organizer(self.organizer)
+        return redirect(reverse(
+            "plugins:pretix_ticketswap:organizer_settings",
+            kwargs={"organizer": self.organizer.slug},
+        ))
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["organizer"] = self.organizer
+        context["partner_base_url"] = _build_partner_base_url(self.request, self.organizer.slug)
+        context["enabled_event_count"] = sum(
+            1 for e in enabled_events_for(self.organizer) if is_event_enabled(e)
         )
-
-        if action == "sync":
-            sync_order_to_ticketswap(request.event.pk, order.pk)
-        elif action == "list":
-            list_tickets_for_order(request.event.pk, order.pk)
-        elif action == "delist":
-            delist_tickets_for_order(request.event.pk, order.pk)
-        else:
-            return JsonResponse(
-                {"success": False, "message": f"Unknown action: {action}"},
-                status=400,
-            )
-
-        logger.info(
-            "ticketswap: manual action=%s event=%s order=%s user=%s",
-            action, request.event.slug, order.code,
-            getattr(request.user, "email", "?"),
-        )
-        return JsonResponse({"success": True})
+        context["EVENT_ENABLED_SETTING"] = EVENT_ENABLED_SETTING
+        return context

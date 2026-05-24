@@ -10,10 +10,11 @@ class TicketSwapApp(PluginConfig):
     default_auto_field = 'django.db.models.BigAutoField'
 
     class PretixPluginMeta:
-        name = gettext_lazy("TicketSwap Integration")
+        name = gettext_lazy("SecureSwap (TicketSwap) Integration")
         author = "Andre Vidal"
         description = gettext_lazy(
-            "Integrate your Pretix events with TicketSwap for secure ticket resale"
+            "Exposes SecureSwap partner endpoints so TicketSwap can validate, "
+            "swap and personalize tickets sold via your Pretix events."
         )
         visible = True
         version = __version__

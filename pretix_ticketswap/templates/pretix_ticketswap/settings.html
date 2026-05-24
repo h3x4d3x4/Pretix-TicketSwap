@@ -2,11 +2,11 @@
 {% load i18n %}
 {% load bootstrap3 %}
 
-{% block title %}{% trans "TicketSwap Settings" %}{% endblock %}
+{% block title %}{% trans "SecureSwap Event Settings" %}{% endblock %}
 
 {% block content %}
 <div class="clearfix" style="margin-bottom: 10px;">
-    <h1 style="display: inline-block;">{% trans "TicketSwap Settings" %}</h1>
+    <h1 style="display: inline-block;">{% trans "SecureSwap Event Settings" %}</h1>
     <div class="pull-right" style="padding-top: 18px;">
         <a href="{% url 'plugins:pretix_ticketswap:dashboard' event=request.event.slug organizer=request.organizer.slug %}"
            class="btn btn-default">
@@ -15,31 +15,12 @@
     </div>
 </div>
 
-{% if sandbox_mode %}
-<div class="alert alert-info">
-    <i class="fa fa-flask"></i>
-    <strong>{% trans "Sandbox mode" %}</strong> —
-    {% trans "API calls are simulated. Enter real credentials below to connect to the live TicketSwap API." %}
-</div>
-{% endif %}
-
-{% if connection_status == "connected" %}
-<div class="alert alert-success">
-    <i class="fa fa-check-circle"></i>
-    {% trans "Connected to TicketSwap API." %}
-    {% if ticketswap_event_id %}
-        &nbsp;&nbsp;<strong>{% trans "Event ID:" %}</strong> <code>{{ ticketswap_event_id }}</code>
-    {% endif %}
-</div>
-{% elif connection_status == "failed" %}
-<div class="alert alert-danger">
-    <i class="fa fa-exclamation-triangle"></i>
-    {% trans "Connection to TicketSwap failed. Verify your API credentials below." %}
-</div>
-{% elif connection_status == "not_configured" %}
+{% if not partner_token_configured %}
 <div class="alert alert-warning">
     <i class="fa fa-info-circle"></i>
-    {% trans "Not configured yet. Enter your API credentials below to get started." %}
+    {{ organizer_settings_hint }}
+    <a href="{% url 'plugins:pretix_ticketswap:organizer_settings' organizer=request.organizer.slug %}"
+       class="alert-link">{% trans "Go to organizer settings →" %}</a>
 </div>
 {% endif %}
 
@@ -49,41 +30,28 @@
     <fieldset>
         <legend>{% trans "Integration" %}</legend>
         {% bootstrap_field form.ticketswap_enabled layout='horizontal' %}
+        {% bootstrap_field form.ticketswap_personalization_required layout='horizontal' %}
     </fieldset>
 
     <fieldset>
-        <legend>{% trans "API credentials" %}</legend>
-        {% bootstrap_field form.ticketswap_api_key layout='horizontal' %}
-
-        {% bootstrap_field form.ticketswap_api_secret layout='horizontal' %}
-        {% if api_secret_stored %}
-        <div class="form-group" style="margin-top: -10px;">
-            <div class="col-md-offset-3 col-md-9">
-                <p class="help-block" style="margin-top: -5px;">
-                    <i class="fa fa-check text-success"></i>
-                    {% trans "A secret is currently stored. Leave the field blank to keep it." %}
-                </p>
-            </div>
-        </div>
-        {% endif %}
-
-        {% bootstrap_field form.ticketswap_webhook_secret layout='horizontal' %}
-        {% if webhook_secret_stored %}
-        <div class="form-group" style="margin-top: -10px;">
-            <div class="col-md-offset-3 col-md-9">
-                <p class="help-block" style="margin-top: -5px;">
-                    <i class="fa fa-check text-success"></i>
-                    {% trans "A webhook secret is stored. Leave blank to keep it." %}
-                </p>
-            </div>
-        </div>
-        {% endif %}
+        <legend>{% trans "Event metadata" %}</legend>
+        {% bootstrap_field form.ticketswap_event_type layout='horizontal' %}
+        {% bootstrap_field form.ticketswap_venue_name layout='horizontal' %}
+        {% bootstrap_field form.ticketswap_venue_city layout='horizontal' %}
+        {% bootstrap_field form.ticketswap_venue_country layout='horizontal' %}
+        {% bootstrap_field form.ticketswap_barcode_type layout='horizontal' %}
+        {% bootstrap_field form.ticketswap_swap_available_until layout='horizontal' %}
+        {% bootstrap_field form.ticketswap_sealed_available_at layout='horizontal' %}
     </fieldset>
 
     <fieldset>
-        <legend>{% trans "Resale behavior" %}</legend>
-        {% bootstrap_field form.ticketswap_auto_enable_resale layout='horizontal' %}
-        {% bootstrap_field form.ticketswap_max_resale_price_percent layout='horizontal' %}
+        <legend>{% trans "Resale restrictions" %}</legend>
+        {% bootstrap_field form.ticketswap_excluded_item_ids layout='horizontal' %}
+    </fieldset>
+
+    <fieldset>
+        <legend>{% trans "Personalization fields" %}</legend>
+        {% bootstrap_field form.ticketswap_personalization_fields layout='horizontal' %}
     </fieldset>
 
     <div class="form-group">
@@ -91,123 +59,45 @@
             <button type="submit" class="btn btn-primary btn-save">
                 <i class="fa fa-save"></i> {% trans "Save" %}
             </button>
-            <button type="button" class="btn btn-info" id="test-connection-btn">
-                <i class="fa fa-plug"></i> {% trans "Test connection" %}
-            </button>
-            <span id="test-connection-result" style="margin-left: 10px;"></span>
         </div>
     </div>
 </form>
 
-<hr>
-
 <div class="panel panel-default">
     <div class="panel-heading">
-        <h3 class="panel-title">{% trans "Webhook endpoint" %}</h3>
+        <h3 class="panel-title">{% trans "Partner base URL" %}</h3>
     </div>
     <div class="panel-body">
-        <p class="text-muted">
-            {% trans "Register this URL in your TicketSwap partner dashboard so ticket sales, transfers (SecureSwap), and cancellations flow back into Pretix:" %}
-        </p>
+        <p class="text-muted">{% trans "TicketSwap will call paths under this base URL:" %}</p>
         <div class="input-group">
-            <input type="text" id="ts-webhook-url" class="form-control" value="{{ webhook_url }}" readonly>
+            <input type="text" id="ts-base-url" class="form-control" value="{{ partner_base_url }}" readonly>
             <span class="input-group-btn">
-                <button type="button" class="btn btn-default" id="copy-webhook-btn" title="{% trans 'Copy' %}">
+                <button type="button" class="btn btn-default" id="copy-base-btn">
                     <i class="fa fa-clipboard"></i> {% trans "Copy" %}
                 </button>
             </span>
         </div>
-        <p class="help-block" style="margin-top: 10px;">
-            {% trans "Payloads are authenticated with HMAC-SHA256 using the webhook secret above. Both <code>sha256=&lt;hex&gt;</code> and plain-hex signature formats are accepted." %}
-        </p>
-    </div>
-</div>
-
-<div class="panel panel-default">
-    <div class="panel-heading">
-        <h3 class="panel-title">{% trans "How it works" %}</h3>
-    </div>
-    <div class="panel-body">
-        <ul style="margin-bottom: 0;">
-            <li>{% trans "When an order is placed, the event is synced to TicketSwap (creating it on first use)." %}</li>
-            <li>{% trans "When an order is paid, its tickets are listed for resale — unless \"Auto-enable Resale\" is disabled." %}</li>
-            <li>{% trans "When an order is cancelled, any listed tickets are pulled from TicketSwap." %}</li>
-            <li>{% trans "When a ticket is resold, SecureSwap invalidates the old barcode and installs the new one on the Pretix position." %}</li>
-        </ul>
     </div>
 </div>
 
 <script>
     (function () {
-        var testBtn = document.getElementById('test-connection-btn');
-        var result = document.getElementById('test-connection-result');
-        var defaultLabel = '<i class="fa fa-plug"></i> {% trans "Test connection" %}';
-
-        function setResult(ok, text) {
-            var span = document.createElement('span');
-            var icon = document.createElement('i');
-            span.className = ok ? 'text-success' : 'text-danger';
-            icon.className = ok ? 'fa fa-check' : 'fa fa-times';
-            span.appendChild(icon);
-            span.appendChild(document.createTextNode(' ' + text));
-            result.innerHTML = '';
-            result.appendChild(span);
-        }
-
-        testBtn.addEventListener('click', function () {
-            var apiKey = document.getElementById('id_ticketswap_api_key').value;
-            var apiSecret = document.getElementById('id_ticketswap_api_secret').value;
-
-            if (!apiKey && !apiSecret) {
-                setResult(false, '{% trans "Enter an API key (and secret if not already stored)" %}');
-                return;
+        var copyBtn = document.getElementById('copy-base-btn');
+        if (!copyBtn) return;
+        copyBtn.addEventListener('click', function () {
+            var input = document.getElementById('ts-base-url');
+            var done = function () {
+                var original = copyBtn.innerHTML;
+                copyBtn.innerHTML = '<i class="fa fa-check"></i> {% trans "Copied" %}';
+                setTimeout(function () { copyBtn.innerHTML = original; }, 1500);
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(input.value).then(done, function () {});
+            } else {
+                input.select();
+                try { document.execCommand('copy'); done(); } catch (e) {}
             }
-
-            testBtn.disabled = true;
-            testBtn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> {% trans "Testing…" %}';
-            result.innerHTML = '';
-
-            fetch('{% url "plugins:pretix_ticketswap:test_connection" event=request.event.slug organizer=request.organizer.slug %}', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': '{{ csrf_token }}'
-                },
-                body: JSON.stringify({
-                    api_key: apiKey,
-                    api_secret: apiSecret
-                })
-            })
-                .then(function (r) { return r.json(); })
-                .then(function (data) {
-                    testBtn.disabled = false;
-                    testBtn.innerHTML = defaultLabel;
-                    setResult(!!data.success, data.message || '');
-                })
-                .catch(function () {
-                    testBtn.disabled = false;
-                    testBtn.innerHTML = defaultLabel;
-                    setResult(false, '{% trans "Connection test failed" %}');
-                });
         });
-
-        var copyBtn = document.getElementById('copy-webhook-btn');
-        if (copyBtn) {
-            copyBtn.addEventListener('click', function () {
-                var input = document.getElementById('ts-webhook-url');
-                var done = function () {
-                    var original = copyBtn.innerHTML;
-                    copyBtn.innerHTML = '<i class="fa fa-check"></i> {% trans "Copied" %}';
-                    setTimeout(function () { copyBtn.innerHTML = original; }, 1500);
-                };
-                if (navigator.clipboard && navigator.clipboard.writeText) {
-                    navigator.clipboard.writeText(input.value).then(done, function () {});
-                } else {
-                    input.select();
-                    try { document.execCommand('copy'); done(); } catch (e) {}
-                }
-            });
-        }
     })();
 </script>
 {% endblock %}

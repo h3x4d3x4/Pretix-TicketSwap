@@ -2,207 +2,138 @@
 {% load i18n %}
 {% load bootstrap3 %}
 
-{% block title %}{% trans "TicketSwap Dashboard" %}{% endblock %}
+{% block title %}{% trans "SecureSwap Dashboard" %}{% endblock %}
 
 {% block content %}
 <div class="clearfix" style="margin-bottom: 10px;">
-    <h1 style="display: inline-block;">{% trans "TicketSwap Integration" %}</h1>
+    <h1 style="display: inline-block;">{% trans "SecureSwap Integration" %}</h1>
     <div class="pull-right" style="padding-top: 18px;">
         <a href="{% url 'plugins:pretix_ticketswap:settings' event=request.event.slug organizer=request.organizer.slug %}"
            class="btn btn-default">
-            <i class="fa fa-cog"></i> {% trans "Settings" %}
+            <i class="fa fa-cog"></i> {% trans "Event settings" %}
+        </a>
+        <a href="{% url 'plugins:pretix_ticketswap:organizer_settings' organizer=request.organizer.slug %}"
+           class="btn btn-default">
+            <i class="fa fa-building"></i> {% trans "Organizer settings" %}
         </a>
     </div>
 </div>
 
-{# Top-of-page status banner #}
 {% if not plugin_enabled %}
 <div class="alert alert-warning">
     <i class="fa fa-pause-circle"></i>
-    <strong>{% trans "Integration is disabled." %}</strong>
-    {% trans "No orders will be synced to TicketSwap until you enable it." %}
+    <strong>{% trans "SecureSwap is disabled for this event." %}</strong>
     <a href="{% url 'plugins:pretix_ticketswap:settings' event=request.event.slug organizer=request.organizer.slug %}"
-       class="alert-link">{% trans "Open settings →" %}</a>
+       class="alert-link">{% trans "Enable it →" %}</a>
 </div>
-{% elif sandbox_mode %}
-<div class="alert alert-info">
-    <i class="fa fa-flask"></i>
-    <strong>{% trans "Sandbox mode." %}</strong>
-    {% trans "API calls are simulated locally. Add your TicketSwap API credentials in settings to go live." %}
-</div>
-{% elif connection_status == 'failed' %}
+{% endif %}
+
+{% if not partner_token_configured %}
 <div class="alert alert-danger">
     <i class="fa fa-exclamation-triangle"></i>
-    <strong>{% trans "Cannot reach TicketSwap with the configured credentials." %}</strong>
-    {% trans "Orders placed now may not sync. Review your API key and secret in settings." %}
-</div>
-{% elif connection_status == 'connected' and not webhook_secret_configured %}
-<div class="alert alert-warning">
-    <i class="fa fa-shield"></i>
-    <strong>{% trans "Webhook secret missing." %}</strong>
-    {% trans "Outbound sync is working, but incoming TicketSwap events (sold / transferred / cancelled) will be rejected until you configure the webhook secret in settings." %}
+    <strong>{% trans "Partner token missing." %}</strong>
+    {% trans "TicketSwap won't be able to authenticate against this integration until you set the bearer token at the organizer level." %}
+    <a href="{% url 'plugins:pretix_ticketswap:organizer_settings' organizer=request.organizer.slug %}"
+       class="alert-link">{% trans "Configure now →" %}</a>
 </div>
 {% endif %}
 
 <div class="row">
-    <!-- Connection Status Card -->
-    <div class="col-md-4">
-        <div class="panel panel-{% if connection_status == 'connected' %}success{% elif connection_status == 'not_configured' %}warning{% else %}danger{% endif %}">
-            <div class="panel-heading">
-                <h3 class="panel-title">{% trans "Connection" %}</h3>
-            </div>
-            <div class="panel-body text-center">
-                {% if connection_status == 'connected' %}
-                    <i class="fa fa-check-circle fa-3x text-success"></i>
-                    <h4>{% trans "Connected" %}</h4>
-                    <p class="text-muted">
-                        {% if sandbox_mode %}{% trans "Sandbox session" %}{% else %}{% trans "Live API session" %}{% endif %}
-                    </p>
-                {% elif connection_status == 'not_configured' %}
-                    <i class="fa fa-exclamation-triangle fa-3x text-warning"></i>
-                    <h4>{% trans "Not configured" %}</h4>
-                    <p class="text-muted">{% trans "Add API credentials to get started" %}</p>
-                    <a href="{% url 'plugins:pretix_ticketswap:settings' event=request.event.slug organizer=request.organizer.slug %}"
-                       class="btn btn-primary btn-sm">
-                        {% trans "Configure now" %}
-                    </a>
-                {% else %}
-                    <i class="fa fa-times-circle fa-3x text-danger"></i>
-                    <h4>{% trans "Connection failed" %}</h4>
-                    <p class="text-muted">{% trans "Check API credentials" %}</p>
-                {% endif %}
-            </div>
-        </div>
-    </div>
-
-    <!-- Statistics -->
-    <div class="col-md-8">
-        <div class="panel panel-default">
-            <div class="panel-heading">
-                <h3 class="panel-title">{% trans "This event on TicketSwap" %}</h3>
-            </div>
-            <div class="panel-body">
-                <div class="row">
-                    <div class="col-sm-4 text-center">
-                        <h2 class="text-primary" style="margin-top:0;">{{ stats.listed_tickets|default:0 }}</h2>
-                        <p class="text-muted">
-                            <i class="fa fa-tag"></i> {% trans "Tickets listed" %}
-                        </p>
-                    </div>
-                    <div class="col-sm-4 text-center">
-                        <h2 class="text-success" style="margin-top:0;">{{ stats.sold_tickets|default:0 }}</h2>
-                        <p class="text-muted">
-                            <i class="fa fa-dollar"></i> {% trans "Tickets sold" %}
-                        </p>
-                    </div>
-                    <div class="col-sm-4 text-center">
-                        <h2 class="text-info" style="margin-top:0;">{{ stats.secureswap_transfers|default:0 }}</h2>
-                        <p class="text-muted">
-                            <i class="fa fa-exchange"></i> {% trans "SecureSwap transfers" %}
-                        </p>
-                    </div>
-                </div>
-
-                {% if plugin_enabled and not auto_enable_resale %}
-                <hr>
-                <p class="text-muted" style="margin: 0;">
-                    <i class="fa fa-info-circle"></i>
-                    {% trans "Auto-enable resale is off — tickets won't be listed automatically when orders are paid." %}
-                </p>
-                {% endif %}
-            </div>
-        </div>
-    </div>
-</div>
-
-<div class="row">
-    <!-- Event Sync -->
     <div class="col-md-6">
         <div class="panel panel-default">
             <div class="panel-heading">
-                <h3 class="panel-title">{% trans "Event sync" %}</h3>
-            </div>
-            <div class="panel-body">
-                {% if ticketswap_event_id %}
-                    <dl class="dl-horizontal" style="margin-bottom: 0;">
-                        <dt>{% trans "Pretix event" %}</dt>
-                        <dd>{{ request.event.name }}</dd>
-
-                        <dt>{% trans "TicketSwap ID" %}</dt>
-                        <dd>
-                            <code id="ts-event-id">{{ ticketswap_event_id }}</code>
-                            <button type="button" class="btn btn-xs btn-default ts-copy"
-                                    data-copy-target="ts-event-id"
-                                    title="{% trans 'Copy' %}">
-                                <i class="fa fa-clipboard"></i>
-                            </button>
-                        </dd>
-
-                        <dt>{% trans "Status" %}</dt>
-                        <dd><span class="label label-success">{% trans "Synced" %}</span></dd>
-                    </dl>
-                {% else %}
-                    <p class="text-muted" style="margin-bottom: 10px;">
-                        <i class="fa fa-info-circle"></i>
-                        {% trans "Event not yet created on TicketSwap." %}
-                        {% if plugin_enabled %}
-                            {% trans "It'll be created automatically when the first order is placed." %}
-                        {% else %}
-                            {% trans "Enable the integration in settings and save — the event will be created." %}
-                        {% endif %}
-                    </p>
-                {% endif %}
-            </div>
-        </div>
-    </div>
-
-    <!-- Webhook URL -->
-    <div class="col-md-6">
-        <div class="panel panel-default">
-            <div class="panel-heading">
-                <h3 class="panel-title">{% trans "Webhook URL" %}</h3>
+                <h3 class="panel-title">{% trans "Partner base URL" %}</h3>
             </div>
             <div class="panel-body">
                 <p class="text-muted" style="margin-bottom: 8px;">
-                    {% trans "Paste this URL into your TicketSwap partner dashboard:" %}
+                    {% trans "Share this base URL with TicketSwap. Endpoint paths from the spec append directly:" %}
                 </p>
                 <div class="input-group">
-                    <input type="text" id="ts-webhook-url" class="form-control"
-                           value="{{ webhook_url }}" readonly>
+                    <input type="text" id="ts-base-url" class="form-control"
+                           value="{{ partner_base_url }}" readonly>
                     <span class="input-group-btn">
                         <button type="button" class="btn btn-default ts-copy"
-                                data-copy-target="ts-webhook-url"
+                                data-copy-target="ts-base-url"
                                 title="{% trans 'Copy' %}">
                             <i class="fa fa-clipboard"></i> {% trans "Copy" %}
                         </button>
                     </span>
                 </div>
-                {% if not webhook_secret_configured %}
-                <p class="text-warning" style="margin-top: 10px; margin-bottom: 0;">
-                    <i class="fa fa-exclamation-triangle"></i>
-                    {% trans "No webhook secret configured — incoming events will be rejected." %}
-                </p>
-                {% endif %}
+                <ul class="text-muted" style="margin-top: 8px; padding-left: 18px;">
+                    <li><code>GET&nbsp;&nbsp;validate?barcode=…</code></li>
+                    <li><code>POST&nbsp;swap</code></li>
+                    <li><code>POST&nbsp;personalize</code></li>
+                    <li><code>GET&nbsp;&nbsp;personalization-fields/{barcode}</code></li>
+                    <li><code>GET&nbsp;&nbsp;events</code> &nbsp;·&nbsp; <code>GET&nbsp;events/{id}</code></li>
+                    <li><code>GET&nbsp;&nbsp;tickets/{uniqueIdentifier}</code></li>
+                    <li><code>POST/DELETE&nbsp;lock/{ticketId}</code></li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="panel panel-default">
+            <div class="panel-heading">
+                <h3 class="panel-title">{% trans "Event state" %}</h3>
+            </div>
+            <div class="panel-body">
+                <dl class="dl-horizontal" style="margin-bottom: 0;">
+                    <dt>{% trans "Enabled" %}</dt>
+                    <dd>{% if plugin_enabled %}<span class="label label-success">{% trans "Yes" %}</span>{% else %}<span class="label label-default">{% trans "No" %}</span>{% endif %}</dd>
+
+                    <dt>{% trans "Partner token" %}</dt>
+                    <dd>{% if partner_token_configured %}<span class="label label-success">{% trans "Configured" %}</span>{% else %}<span class="label label-danger">{% trans "Missing" %}</span>{% endif %}</dd>
+
+                    <dt>{% trans "Personalization" %}</dt>
+                    <dd>{% if personalization_required %}<span class="label label-info">{% trans "Required" %}</span>{% else %}<span class="label label-default">{% trans "Optional" %}</span>{% endif %}</dd>
+
+                    <dt>{% trans "Event UUID" %}</dt>
+                    <dd><code id="ts-event-uuid">{{ event_uuid }}</code>
+                        <button type="button" class="btn btn-xs btn-default ts-copy"
+                                data-copy-target="ts-event-uuid"
+                                title="{% trans 'Copy' %}">
+                            <i class="fa fa-clipboard"></i>
+                        </button>
+                    </dd>
+                </dl>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Recent activity -->
 <div class="row">
     <div class="col-md-12">
         <div class="panel panel-default">
             <div class="panel-heading">
-                <h3 class="panel-title">{% trans "Recent activity" %}</h3>
+                <h3 class="panel-title">{% trans "Activity" %}</h3>
             </div>
             <div class="panel-body">
+                <div class="row text-center" style="margin-bottom: 20px;">
+                    <div class="col-sm-3">
+                        <h2 class="text-primary" style="margin-top:0;">{{ stats.locked_tickets|default:0 }}</h2>
+                        <p class="text-muted"><i class="fa fa-lock"></i> {% trans "Locked (listed)" %}</p>
+                    </div>
+                    <div class="col-sm-3">
+                        <h2 class="text-info" style="margin-top:0;">{{ stats.secureswap_transfers|default:0 }}</h2>
+                        <p class="text-muted"><i class="fa fa-exchange"></i> {% trans "Swaps" %}</p>
+                    </div>
+                    <div class="col-sm-3">
+                        <h2 class="text-success" style="margin-top:0;">{{ stats.personalized_tickets|default:0 }}</h2>
+                        <p class="text-muted"><i class="fa fa-id-card"></i> {% trans "Personalized" %}</p>
+                    </div>
+                    <div class="col-sm-3">
+                        <h2 class="text-default" style="margin-top:0;">{{ stats.listed_tickets|default:0 }}</h2>
+                        <p class="text-muted"><i class="fa fa-tag"></i> {% trans "Total touched" %}</p>
+                    </div>
+                </div>
+
                 {% if recent_activity %}
                     <table class="table table-condensed" style="margin-bottom: 0;">
                         <thead>
                             <tr>
                                 <th>{% trans "Order" %}</th>
                                 <th>{% trans "Position" %}</th>
-                                <th>{% trans "TicketSwap ticket" %}</th>
                                 <th>{% trans "State" %}</th>
                                 <th>{% trans "Date" %}</th>
                             </tr>
@@ -212,18 +143,13 @@
                             <tr>
                                 <td><code>{{ a.order_code }}</code></td>
                                 <td>#{{ a.position_id }}</td>
-                                <td>{% if a.ticket_id %}<code>{{ a.ticket_id }}</code>{% else %}<span class="text-muted">—</span>{% endif %}</td>
                                 <td>
-                                    {% if a.state == 'sold' %}
-                                        <span class="label label-success">{% trans "Sold" %}</span>
-                                    {% elif a.state == 'transferred' %}
-                                        <span class="label label-info">{% trans "Transferred" %}</span>
-                                    {% elif a.state == 'listed' %}
-                                        <span class="label label-primary">{% trans "Listed" %}</span>
-                                    {% elif a.state == 'cancelled' %}
-                                        <span class="label label-default">{% trans "Cancelled" %}</span>
-                                    {% elif a.state == 'synced' %}
-                                        <span class="label label-default">{% trans "Synced" %}</span>
+                                    {% if a.state == 'personalized' %}
+                                        <span class="label label-success">{% trans "Personalized" %}</span>
+                                    {% elif a.state == 'swapped' %}
+                                        <span class="label label-info">{% trans "Swapped" %}</span>
+                                    {% elif a.state == 'locked' %}
+                                        <span class="label label-primary">{% trans "Locked" %}</span>
                                     {% else %}
                                         <span class="label label-default">{{ a.state }}</span>
                                     {% endif %}
@@ -236,11 +162,7 @@
                 {% else %}
                     <p class="text-muted text-center" style="margin: 0;">
                         <i class="fa fa-inbox"></i>
-                        {% if plugin_enabled %}
-                            {% trans "No TicketSwap activity yet. It'll show up here once orders start syncing." %}
-                        {% else %}
-                            {% trans "No activity — integration is disabled." %}
-                        {% endif %}
+                        {% trans "No SecureSwap activity yet." %}
                     </p>
                 {% endif %}
             </div>
@@ -249,7 +171,6 @@
 </div>
 
 <script>
-    // Copy-to-clipboard for the event ID and webhook URL.
     document.querySelectorAll('.ts-copy').forEach(function (btn) {
         btn.addEventListener('click', function () {
             var target = document.getElementById(btn.dataset.copyTarget);
@@ -262,12 +183,9 @@
             };
             if (navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(text).then(done, function () {});
-            } else {
-                // Fallback for older browsers
-                if (target.tagName === 'INPUT') {
-                    target.select();
-                    try { document.execCommand('copy'); done(); } catch (e) {}
-                }
+            } else if (target.tagName === 'INPUT') {
+                target.select();
+                try { document.execCommand('copy'); done(); } catch (e) {}
             }
         });
     });
